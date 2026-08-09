@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 # RUDRA AI — Autonomous Desktop Intelligence
 
 > **Version:** 1.0.0  
