@@ -1,0 +1,9 @@
+{
+  "llm_provider": "ollama",
+  "ollama_model": "qwen2.5:3b-instruct-q4_K_M",
+  "ollama_threads": 4,
+  "wakeword_name": "Rudra",
+  "stt_model": "base",
+  "tts_voice": "hi-IN-MadhurNeural",
+  "scripture_collection": "scriptures"
+}

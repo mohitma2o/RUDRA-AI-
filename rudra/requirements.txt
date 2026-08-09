@@ -1,0 +1,17 @@
+openwakeword
+SpeechRecognition
+faster-whisper
+edge-tts
+ollama
+openai
+anthropic
+sentence-transformers
+python-dotenv
+chromadb
+pystray
+Pillow
+pyautogui
+keyboard
+psutil
+opencv-python
+playwright
