@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # RUDRA AI — Autonomous Desktop Intelligence
 
 > **Version:** 1.0.0  
@@ -96,3 +97,8 @@ RUDRA_AI/
 4. **Document AI:** Parse and summarize documents for contextual Q&A.
 5. **Coding Assistant:** Generate clean, commented code and explain error stack traces.
 6. **Plugin Platform:** Extensible framework for third-party tools.
+
+---
+
+Rudra is a Jarvis-style voice assistant that runs in the background on Windows, listens for its name, and speaks back in Hindi, English, or Punjabi. It combines local LLM reasoning (Ollama/Qwen2.5), speech recognition, desktop automation, and a scripture-grounded advice module inspired by Hindu philosophy.
+
