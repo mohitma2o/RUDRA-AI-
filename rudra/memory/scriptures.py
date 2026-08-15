@@ -54,11 +54,7 @@ def _load_embedding_function() -> Any:
 def _get_client() -> Any:
     global _client
     if _client is None:
-        settings = Settings(
-            chroma_db_impl="duckdb+parquet",
-            persist_directory=str(CHROMA_DB_PATH),
-        )
-        _client = chromadb.Client(settings=settings)
+        _client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
     return _client
 
 
@@ -141,7 +137,6 @@ def add_scripture_text(source_name: str, text: str) -> None:
         metadatas=metadatas,
         documents=chunks,
     )
-    _get_client().persist()
 
 
 def query(question: str, k: int = 3) -> list[dict[str, Any]]:

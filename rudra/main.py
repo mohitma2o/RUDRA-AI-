@@ -9,11 +9,15 @@ import signal
 import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pystray
 from PIL import Image, ImageDraw
 
+from llm import query_llm
+from memory.scriptures import query as query_scripture
+from stt import transcribe_audio
+from tts import speak_text
 from wakeword import start_wakeword_listener, stop_wakeword_listener
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
@@ -86,7 +90,45 @@ class RudraTray:
     def _on_wake(self, phrase: str) -> None:
         if self.paused:
             return
+
         self._notify("Rudra wake word detected. Listening now.")
+
+        try:
+            user_text = transcribe_audio()
+        except Exception as exc:
+            self._notify(f"Speech transcription failed: {exc}")
+            return
+
+        if not user_text:
+            self._notify("No speech detected. Please try again.")
+            return
+
+        scripture_context: Optional[list[str]] = None
+        try:
+            scripture_hits = query_scripture(user_text, k=3)
+            if scripture_hits:
+                scripture_context = [
+                    f"{hit.get('source', 'scripture')}: {hit.get('text', '')}"
+                    for hit in scripture_hits
+                    if hit.get('text')
+                ]
+                if scripture_context:
+                    self._notify("Scripture context found for your query.")
+        except Exception as exc:
+            self._notify(f"Scripture retrieval failed: {exc}")
+
+        try:
+            response = query_llm(user_text, context=scripture_context)
+        except Exception as exc:
+            self._notify(f"LLM query failed: {exc}")
+            return
+
+        try:
+            speak_text(response)
+        except Exception as exc:
+            self._notify(f"Speech output failed: {exc}")
+        else:
+            self._notify("Rudra has responded.")
 
     def start(self) -> None:
         start_wakeword_listener(self._on_wake, str(MODEL_PATH))

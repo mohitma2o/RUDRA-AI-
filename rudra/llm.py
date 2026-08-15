@@ -61,25 +61,18 @@ def _query_ollama(prompt: str, context: Optional[List[str]] = None) -> str:
     try:
         import ollama
 
-        client = getattr(ollama, "Ollama", None)
-        if client is None:
-            raise RuntimeError("Ollama Python client class not found.")
-        instance = client()
-
-        if hasattr(instance, "chat_completion"):
-            response = instance.chat_completion.create(model=model, messages=messages)
-            return getattr(response.choices[0].message, "content", str(response)).strip()
-
-        if hasattr(instance, "chat"):
-            response = instance.chat.create(model=model, messages=messages)
-            return getattr(response, "content", str(response)).strip()
+        if hasattr(ollama, "chat"):
+            response = ollama.chat(model=model, messages=messages)
+            if isinstance(response, dict):
+                return response.get("message", {}).get("content", "").strip()
+            return str(response).strip()
     except Exception:
         pass
 
     prompt_text = system_context + "\n\nUser: " + prompt + "\n\nAssistant:"
     try:
         completed = subprocess.run(
-            ["ollama", "chat", model, "--no-stream", "--prompt", prompt_text],
+            ["ollama", "run", model, prompt_text],
             capture_output=True,
             text=True,
             check=True,

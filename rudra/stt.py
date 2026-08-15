@@ -60,7 +60,6 @@ def transcribe_audio(duration: float = 5.0, silence_timeout: float = 1.5) -> str
         model = load_stt_model()
         segments, _ = model.transcribe(
             str(temp_path),
-            language="auto",
             task="transcribe",
         )
         text = " ".join(segment.text.strip() for segment in segments if segment.text)
