@@ -1,4 +1,6 @@
 openwakeword
+pyaudio
+onnxruntime
 SpeechRecognition
 faster-whisper
 edge-tts

@@ -1,30 +1,24 @@
 """Wake word listener using openWakeWord, with SpeechRecognition fallback."""
 
+import time
 from pathlib import Path
 from threading import Event, Thread
 from typing import Callable
 
+import numpy as np
+
 _stop_event = Event()
 
 
-def load_wakeword_model(model_path: str) -> object:
+def load_wakeword_model(model_path: str):
     """Load and return the openWakeWord model from disk."""
-    try:
-        import openwakeword as ow
-    except ImportError as exc:
-        raise RuntimeError(
-            "openwakeword is not installed. Install with `pip install openwakeword`."
-        ) from exc
+    from openwakeword.model import Model
 
     path = Path(model_path)
     if not path.exists():
         raise FileNotFoundError(f"Wake word model not found at {path}")
 
-    model_cls = getattr(ow, "Model", None) or getattr(ow, "WakeWordModel", None)
-    if model_cls is None:
-        raise RuntimeError("openwakeword API not found in imported module.")
-
-    return model_cls(str(path))
+    return Model(wakeword_models=[str(path)])
 
 
 def _speech_recognition_loop(callback: Callable[[str], None]) -> None:
@@ -63,7 +57,7 @@ def _speech_recognition_loop(callback: Callable[[str], None]) -> None:
         ) from exc
 
 
-def start_wakeword_listener(callback: Callable[[str], None], model_path: str = "models/rudra_openwakeword.bin") -> None:
+def start_wakeword_listener(callback: Callable[[str], None], model_path: str = "models/rudra.onnx") -> None:
     """Start a wake word listener thread and call callback when Rudra is detected."""
     try:
         model = load_wakeword_model(model_path)
@@ -82,6 +76,36 @@ def stop_wakeword_listener() -> None:
     _stop_event.set()
 
 
-def _openwakeword_loop(callback: Callable[[str], None], model: object) -> None:
-    print("openWakeWord loop is not fully configured. Falling back to speech recognition.")
-    _speech_recognition_loop(callback)
+def _openwakeword_loop(callback: Callable[[str], None], model) -> None:
+    import pyaudio
+
+    pa = pyaudio.PyAudio()
+    stream = pa.open(
+        format=pyaudio.paInt16,
+        channels=1,
+        rate=16000,
+        input=True,
+        frames_per_buffer=1280,
+    )
+    last_trigger = 0.0
+
+    try:
+        while not _stop_event.is_set():
+            frame = stream.read(1280, exception_on_overflow=False)
+            audio = np.frombuffer(frame, dtype=np.int16)
+            predictions = model.predict(audio)
+
+            if not predictions:
+                continue
+
+            for model_name, score in predictions.items():
+                if float(score) > 0.5 and time.monotonic() >= last_trigger + 1.5:
+                    callback(model_name)
+                    last_trigger = time.monotonic()
+                    break
+
+            time.sleep(0.01)
+    finally:
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()

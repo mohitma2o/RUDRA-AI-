@@ -21,7 +21,7 @@ from tts import speak_text
 from wakeword import start_wakeword_listener, stop_wakeword_listener
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
-MODEL_PATH = Path(__file__).parent / "models" / "rudra_openwakeword.bin"
+MODEL_PATH = Path(__file__).parent / "models" / "rudra.onnx"
 ICON_PATH = Path(__file__).parent / "tray_icon.ico"
 
 

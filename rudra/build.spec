@@ -19,7 +19,7 @@ datas = [
     ("config.json", "."),
     (".env.example", "."),
     ("tray_icon.ico", "."),
-    ("models/rudra_openwakeword.bin", "models"),
+    ("models/rudra.onnx", "models"),
 ]
 
 a = Analysis(
