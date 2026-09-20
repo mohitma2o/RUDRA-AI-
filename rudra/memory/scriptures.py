@@ -149,9 +149,13 @@ def query(question: str, k: int = 3) -> list[dict[str, Any]]:
     if collection is None:
         return []
 
+    count = collection.count()
+    if count == 0:
+        return []
+
     results = collection.query(
         query_texts=[question],
-        n_results=k,
+        n_results=min(k, count),
         include=["documents", "metadatas", "distances"],
     )
 
