@@ -38,8 +38,17 @@ def get_llm_backend() -> str:
     return provider.strip().lower()
 
 
-def _build_system_context(context: Optional[List[str]] = None) -> str:
+def _build_system_context(context: Optional[List[str]] = None, language: Optional[str] = None) -> str:
     system_content = SYSTEM_PROMPT
+
+    lang = (language or "").strip().lower()
+    if lang.startswith("hi"):
+        system_content += "\n\nAlways answer in Hindi."
+    elif lang.startswith("pa"):
+        system_content += "\n\nAlways answer in Punjabi."
+    else:
+        system_content += "\n\nAlways answer in English unless the user clearly speaks Hindi or Punjabi."
+
     if context:
         scripture_context = "\n\n".join(c.strip() for c in context if c and c.strip())
         if scripture_context:
@@ -47,12 +56,12 @@ def _build_system_context(context: Optional[List[str]] = None) -> str:
     return system_content
 
 
-def _query_ollama(prompt: str, context: Optional[List[str]] = None) -> str:
+def _query_ollama(prompt: str, context: Optional[List[str]] = None, language: Optional[str] = None) -> str:
     model = _CONFIG.get("ollama_model", "qwen2.5:3b-instruct-q4_K_M")
     thread_count = int(_CONFIG.get("ollama_threads", 4))
     os.environ.setdefault("OLLAMA_NUM_THREAD", str(thread_count))
 
-    system_context = _build_system_context(context)
+    system_context = _build_system_context(context, language)
     messages = [
         {"role": "system", "content": system_context},
         {"role": "user", "content": prompt},
@@ -64,7 +73,24 @@ def _query_ollama(prompt: str, context: Optional[List[str]] = None) -> str:
         if hasattr(ollama, "chat"):
             response = ollama.chat(model=model, messages=messages)
             if isinstance(response, dict):
-                return response.get("message", {}).get("content", "").strip()
+                message = response.get("message") or {}
+                if isinstance(message, dict):
+                    content = message.get("content", "")
+                    if content:
+                        return str(content).strip()
+                content = response.get("content", "")
+                if content:
+                    return str(content).strip()
+            if hasattr(response, "message"):
+                message = getattr(response, "message")
+                if hasattr(message, "content"):
+                    content = getattr(message, "content")
+                    if content:
+                        return str(content).strip()
+                if isinstance(message, dict):
+                    content = message.get("content", "")
+                    if content:
+                        return str(content).strip()
             return str(response).strip()
     except Exception:
         pass
@@ -86,7 +112,7 @@ def _query_ollama(prompt: str, context: Optional[List[str]] = None) -> str:
         raise RuntimeError(f"Ollama CLI error: {exc.stderr.strip()}") from exc
 
 
-def _query_openai(prompt: str, context: Optional[List[str]] = None) -> str:
+def _query_openai(prompt: str, context: Optional[List[str]] = None, language: Optional[str] = None) -> str:
     try:
         import openai
     except ImportError as exc:
@@ -97,7 +123,7 @@ def _query_openai(prompt: str, context: Optional[List[str]] = None) -> str:
         raise RuntimeError("OPENAI_API_KEY must be set for OpenAI provider.")
     openai.api_key = api_key
 
-    system_context = _build_system_context(context)
+    system_context = _build_system_context(context, language)
     response = openai.ChatCompletion.create(
         model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
         messages=[
@@ -108,7 +134,7 @@ def _query_openai(prompt: str, context: Optional[List[str]] = None) -> str:
     return response.choices[0].message.content.strip()
 
 
-def _query_anthropic(prompt: str, context: Optional[List[str]] = None) -> str:
+def _query_anthropic(prompt: str, context: Optional[List[str]] = None, language: Optional[str] = None) -> str:
     try:
         import anthropic
     except ImportError as exc:
@@ -123,7 +149,7 @@ def _query_anthropic(prompt: str, context: Optional[List[str]] = None) -> str:
         raise RuntimeError("Anthropic client class not found in anthropic SDK.")
 
     client = client_cls(api_key=api_key)
-    prompt_text = _build_system_context(context)
+    prompt_text = _build_system_context(context, language)
     prompt_text += f"\n\nHuman: {prompt}\n\nAssistant:"
 
     if hasattr(client, "completions"):
@@ -145,13 +171,13 @@ def _query_anthropic(prompt: str, context: Optional[List[str]] = None) -> str:
     raise RuntimeError("Unsupported Anthropic SDK API.")
 
 
-def query_llm(prompt: str, context: Optional[List[str]] = None) -> str:
-    """Query the configured LLM with an optional scripture context."""
+def query_llm(prompt: str, context: Optional[List[str]] = None, language: Optional[str] = None) -> str:
+    """Query the configured LLM with an optional scripture context and spoken language hint."""
     backend = get_llm_backend()
     if backend == "ollama":
-        return _query_ollama(prompt, context)
+        return _query_ollama(prompt, context, language)
     if backend == "openai":
-        return _query_openai(prompt, context)
+        return _query_openai(prompt, context, language)
     if backend == "anthropic":
-        return _query_anthropic(prompt, context)
+        return _query_anthropic(prompt, context, language)
     raise RuntimeError(f"Unsupported LLM provider: {backend}")

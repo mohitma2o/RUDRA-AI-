@@ -10,6 +10,30 @@ import numpy as np
 _stop_event = Event()
 
 
+def _ensure_openwakeword_resources() -> bool:
+    """Download the shared ONNX resource bundle used by openWakeWord if missing."""
+    try:
+        import openwakeword
+        from openwakeword.utils import download_models
+    except Exception:
+        return False
+
+    resources_dir = Path(openwakeword.__file__).resolve().parent / "resources"
+    models_dir = resources_dir / "models"
+    if models_dir.exists() and any(models_dir.glob("*.onnx")):
+        return True
+
+    try:
+        print("openWakeWord model resources missing; downloading bundled wakeword models...")
+        download_models()
+        if models_dir.exists() and any(models_dir.glob("*.onnx")):
+            return True
+    except Exception as exc:
+        print(f"openWakeWord resource download failed: {exc}")
+
+    return False
+
+
 def load_wakeword_model(model_path: str):
     """Load and return the openWakeWord model from disk."""
     from openwakeword.model import Model
@@ -18,7 +42,14 @@ def load_wakeword_model(model_path: str):
     if not path.exists():
         raise FileNotFoundError(f"Wake word model not found at {path}")
 
-    return Model(wakeword_models=[str(path)])
+    try:
+        return Model(wakeword_models=[str(path)])
+    except Exception as exc:
+        message = str(exc)
+        if "NO_SUCHFILE" in message or "melspectrogram.onnx" in message:
+            if _ensure_openwakeword_resources():
+                return Model(wakeword_models=[str(path)])
+        raise
 
 
 def _speech_recognition_loop(callback: Callable[[str], None]) -> None:

@@ -39,6 +39,7 @@ def transcribe_audio(duration: float = 5.0, silence_timeout: float = 1.5) -> str
     try:
         with sr.Microphone() as source:
             recognizer.adjust_for_ambient_noise(source, duration=1.0)
+            print("Listening for speech...")
             audio = recognizer.listen(
                 source,
                 timeout=duration,
@@ -49,6 +50,7 @@ def transcribe_audio(duration: float = 5.0, silence_timeout: float = 1.5) -> str
             "Microphone access failed. Verify your audio device is connected."
         ) from exc
     except sr.WaitTimeoutError:
+        print("No speech detected before the timeout elapsed.")
         return ""
 
     wav_data = audio.get_wav_data()
@@ -58,12 +60,15 @@ def transcribe_audio(duration: float = 5.0, silence_timeout: float = 1.5) -> str
 
     try:
         model = load_stt_model()
+        print(f"Transcribing captured audio at {temp_path}...")
         segments, _ = model.transcribe(
             str(temp_path),
             task="transcribe",
         )
         text = " ".join(segment.text.strip() for segment in segments if segment.text)
-        return text.strip()
+        cleaned = text.strip()
+        print(f"Transcription result: {cleaned!r}")
+        return cleaned
     finally:
         try:
             temp_path.unlink()

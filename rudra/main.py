@@ -8,21 +8,34 @@ import json
 import signal
 import sys
 import threading
+import traceback
 from pathlib import Path
 from typing import Any, Optional
 
 import pystray
 from PIL import Image, ImageDraw
 
+from agent import agent_response, detect_tool_call
 from llm import query_llm
 from memory.scriptures import query as query_scripture
 from stt import transcribe_audio
-from tts import speak_text
+from tts import speak_text, stop_speaking
 from wakeword import start_wakeword_listener, stop_wakeword_listener
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 MODEL_PATH = Path(__file__).parent / "models" / "rudra.onnx"
 ICON_PATH = Path(__file__).parent / "tray_icon.ico"
+
+
+def detect_language(text: str) -> str:
+    """Infer the language of the transcription for the TTS voice selection."""
+    if not text:
+        return "en"
+    if any(ch in text for ch in "ऀ-ॿ\u0900-\u097F"):
+        return "hi"
+    if any(ch in text for ch in "ਕ-ੴ\u0A00-\u0A7F"):
+        return "pa"
+    return "en"
 
 
 def load_config() -> dict[str, Any]:
@@ -52,6 +65,8 @@ class RudraTray:
     def __init__(self, config: dict[str, Any]):
         self.config = config
         self.paused = False
+        self._processing = False
+        self._processing_lock = threading.Lock()
         self.icon = pystray.Icon(
             "Rudra",
             _create_icon(),
@@ -91,44 +106,82 @@ class RudraTray:
         if self.paused:
             return
 
-        self._notify("Rudra wake word detected. Listening now.")
+        with self._processing_lock:
+            if self._processing:
+                print(f"Wake event ignored while processing: {phrase}")
+                return
+            self._processing = True
 
         try:
-            user_text = transcribe_audio()
-        except Exception as exc:
-            self._notify(f"Speech transcription failed: {exc}")
-            return
+            print(f"Wake word callback fired: {phrase}")
+            self._notify("Rudra wake word detected. Listening now.")
+            stop_speaking()
 
-        if not user_text:
-            self._notify("No speech detected. Please try again.")
-            return
+            try:
+                print("Stage 1: transcribing user speech...")
+                user_text = transcribe_audio()
+                print(f"Stage 1 result: {user_text!r}")
+            except Exception as exc:
+                print(f"Speech transcription failed: {exc}")
+                traceback.print_exc()
+                self._notify(f"Speech transcription failed: {exc}")
+                return
 
-        scripture_context: Optional[list[str]] = None
-        try:
-            scripture_hits = query_scripture(user_text, k=3)
-            if scripture_hits:
-                scripture_context = [
-                    f"{hit.get('source', 'scripture')}: {hit.get('text', '')}"
-                    for hit in scripture_hits
-                    if hit.get('text')
-                ]
-                if scripture_context:
-                    self._notify("Scripture context found for your query.")
-        except Exception as exc:
-            self._notify(f"Scripture retrieval failed: {exc}")
+            if not user_text:
+                self._notify("No speech detected. Please try again.")
+                return
 
-        try:
-            response = query_llm(user_text, context=scripture_context)
-        except Exception as exc:
-            self._notify(f"LLM query failed: {exc}")
-            return
+            language = detect_language(user_text)
+            if detect_tool_call(user_text):
+                try:
+                    print("Stage 2: dispatching agent tool call...")
+                    response = agent_response(user_text, lambda prompt: query_llm(prompt, language=language))
+                    print(f"Stage 2 result length: {len(response) if response else 0}")
+                except Exception as exc:
+                    print(f"Agent execution failed: {exc}")
+                    traceback.print_exc()
+                    self._notify(f"Agent execution failed: {exc}")
+                    return
+            else:
+                scripture_context: Optional[list[str]] = None
+                try:
+                    scripture_hits = query_scripture(user_text, k=3)
+                    if scripture_hits:
+                        scripture_context = [
+                            f"{hit.get('source', 'scripture')}: {hit.get('text', '')}"
+                            for hit in scripture_hits
+                            if hit.get('text')
+                        ]
+                        if scripture_context:
+                            self._notify("Scripture context found for your query.")
+                except Exception as exc:
+                    print(f"Scripture retrieval failed: {exc}")
+                    traceback.print_exc()
+                    self._notify(f"Scripture retrieval failed: {exc}")
 
-        try:
-            speak_text(response)
-        except Exception as exc:
-            self._notify(f"Speech output failed: {exc}")
-        else:
-            self._notify("Rudra has responded.")
+                try:
+                    print("Stage 2: sending prompt to LLM...")
+                    response = query_llm(user_text, context=scripture_context, language=language)
+                    print(f"Stage 2 result length: {len(response) if response else 0}")
+                except Exception as exc:
+                    print(f"LLM query failed: {exc}")
+                    traceback.print_exc()
+                    self._notify(f"LLM query failed: {exc}")
+                    return
+
+            try:
+                print("Stage 3: speaking response...")
+                print(f"Detected response language: {language}")
+                speak_text(response, language=language)
+            except Exception as exc:
+                print(f"Speech output failed: {exc}")
+                traceback.print_exc()
+                self._notify(f"Speech output failed: {exc}")
+            else:
+                print("Stage 3 complete: audio playback returned without exception.")
+                self._notify("Rudra has responded.")
+        finally:
+            self._processing = False
 
     def start(self) -> None:
         start_wakeword_listener(self._on_wake, str(MODEL_PATH))

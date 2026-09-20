@@ -46,9 +46,7 @@ def _load_embedding_function() -> Any:
                     "Failed to initialize OpenAI embeddings. Check OPENAI_API_KEY and model settings."
                 ) from exc
 
-    raise RuntimeError(
-        "No embedding backend available. Install sentence-transformers or set OPENAI_API_KEY."
-    )
+    return None
 
 
 def _get_client() -> Any:
@@ -63,6 +61,9 @@ def _get_collection() -> Any:
     if _collection is None:
         client = _get_client()
         embedding_fn = _load_embedding_function()
+        if embedding_fn is None:
+            print("Scripture memory: no embedding backend available; skipping scripture retrieval.")
+            return None
         _collection = client.get_or_create_collection(
             name=COLLECTION_NAME,
             embedding_function=embedding_fn,
@@ -145,6 +146,9 @@ def query(question: str, k: int = 3) -> list[dict[str, Any]]:
         return []
 
     collection = _get_collection()
+    if collection is None:
+        return []
+
     results = collection.query(
         query_texts=[question],
         n_results=k,
