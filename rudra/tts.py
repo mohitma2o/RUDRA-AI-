@@ -83,6 +83,7 @@ def set_temp_audio_mode(enabled: bool) -> None:
 
 def stop_speaking() -> None:
     """Stop any active Windows audio playback before listening again."""
+    global _ACTIVE_MCI_ALIAS
     if not sys.platform.startswith("win"):
         return
 
@@ -101,7 +102,6 @@ def stop_speaking() -> None:
             ctypes.windll.winmm.mciSendStringW(f"close {alias}", None, 0, None)
         except Exception:
             pass
-        global _ACTIVE_MCI_ALIAS
         _ACTIVE_MCI_ALIAS = None
 
 

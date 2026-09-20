@@ -45,6 +45,10 @@ def _load_embedding_function() -> Any:
                 raise RuntimeError(
                     "Failed to initialize OpenAI embeddings. Check OPENAI_API_KEY and model settings."
                 ) from exc
+        try:
+            return embedding_functions.DefaultEmbeddingFunction()
+        except Exception:
+            pass
 
     return None
 
