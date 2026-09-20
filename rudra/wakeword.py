@@ -119,6 +119,8 @@ def _openwakeword_loop(callback: Callable[[str], None], model) -> None:
         frames_per_buffer=1280,
     )
     last_trigger = 0.0
+    consecutive_hits = 0
+    threshold = 0.6
 
     try:
         while not _stop_event.is_set():
@@ -127,13 +129,26 @@ def _openwakeword_loop(callback: Callable[[str], None], model) -> None:
             predictions = model.predict(audio)
 
             if not predictions:
+                consecutive_hits = 0
                 continue
 
+            triggered = False
             for model_name, score in predictions.items():
-                if float(score) > 0.5 and time.monotonic() >= last_trigger + 1.5:
+                current_score = float(score)
+                if current_score > threshold:
+                    consecutive_hits += 1
+                else:
+                    consecutive_hits = 0
+
+                if consecutive_hits >= 3 and time.monotonic() >= last_trigger + 1.5:
                     callback(model_name)
                     last_trigger = time.monotonic()
+                    consecutive_hits = 0
+                    triggered = True
                     break
+
+            if not triggered and not any(float(score) > threshold for score in predictions.values()):
+                consecutive_hits = 0
 
             time.sleep(0.01)
     finally:

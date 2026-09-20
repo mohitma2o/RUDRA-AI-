@@ -7,14 +7,53 @@ from typing import Dict
 
 import psutil
 
+APP_COMMAND_MAP = {
+    "notepad": "notepad",
+    "google chrome": "chrome",
+    "chrome": "chrome",
+    "edge": "msedge",
+    "calculator": "calc",
+    "calc": "calc",
+    "file explorer": "explorer",
+    "explorer": "explorer",
+    "cmd": "cmd",
+    "command prompt": "cmd",
+    "terminal": "wt",
+    "windows terminal": "wt",
+    "powershell": "powershell",
+    "word": "winword",
+    "excel": "excel",
+    "paint": "mspaint",
+    "task manager": "taskmgr",
+    "spotify": "spotify",
+    "vscode": "code",
+    "vs code": "code",
+    "visual studio code": "code",
+    "code": "code",
+}
+
+
+def _resolve_command(name: str) -> str:
+    """Map a spoken app name to the real Windows executable command when needed."""
+    if not name:
+        return ""
+
+    normalized = name.strip().lower()
+    return APP_COMMAND_MAP.get(normalized, name)
+
 
 def open_application(name: str) -> str:
     """Open a named application on the system."""
     if not name:
         return "No application name provided."
 
+    command = _resolve_command(name)
+
     try:
         if os.name == "nt":
+            if command != name:
+                subprocess.Popen(command, shell=True)
+                return f"Opening {name} now."
             try:
                 os.startfile(name)
             except OSError:
@@ -23,7 +62,7 @@ def open_application(name: str) -> str:
             subprocess.Popen(["open", "-a", name])
         else:
             subprocess.Popen([name])
-        return f"Opened application: {name}"
+        return f"Opening {name} now."
     except Exception as exc:
         return f"Failed to open application: {exc}"
 

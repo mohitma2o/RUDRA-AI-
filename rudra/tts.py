@@ -1,8 +1,8 @@
 """Text-to-speech module using edge-tts."""
 
 import asyncio
+import ctypes
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Optional
 
 _keep_temp_audio = False
+_ACTIVE_MCI_ALIAS: Optional[str] = None
 
 VOICE_MAP = {
     "hi": "hi-IN-MadhurNeural",
-    "pa": "hi-IN-MadhurNeural",
+    "pa": "pa-IN-AmanNeural",
     "en": "en-IN-PrabhatNeural",
 }
 
@@ -45,7 +46,7 @@ def _run_async(coro):
 
 
 def _play_windows_audio(path: Path) -> None:
-    import ctypes
+    global _ACTIVE_MCI_ALIAS
 
     if path.suffix.lower() == ".wav":
         try:
@@ -55,9 +56,15 @@ def _play_windows_audio(path: Path) -> None:
             pass
 
     alias = f"RudraTTS{uuid.uuid4().hex[:8]}"
-    ctypes.windll.winmm.mciSendStringW(f'open "{path}" type mpegvideo alias {alias}', None, 0, None)
-    ctypes.windll.winmm.mciSendStringW(f'play {alias} wait', None, 0, None)
-    ctypes.windll.winmm.mciSendStringW(f'close {alias}', None, 0, None)
+    _ACTIVE_MCI_ALIAS = alias
+    try:
+        ctypes.windll.winmm.mciSendStringW(f'open "{path}" type mpegvideo alias {alias}', None, 0, None)
+        ctypes.windll.winmm.mciSendStringW(f'play {alias} wait', None, 0, None)
+    finally:
+        try:
+            ctypes.windll.winmm.mciSendStringW(f'close {alias}', None, 0, None)
+        finally:
+            _ACTIVE_MCI_ALIAS = None
 
 
 def _play_audio_file(path: Path) -> None:
@@ -76,11 +83,26 @@ def set_temp_audio_mode(enabled: bool) -> None:
 
 def stop_speaking() -> None:
     """Stop any active Windows audio playback before listening again."""
-    if sys.platform.startswith("win"):
+    if not sys.platform.startswith("win"):
+        return
+
+    try:
+        winsound.PlaySound(None, winsound.SND_PURGE)
+    except Exception:
+        pass
+
+    alias = _ACTIVE_MCI_ALIAS
+    if alias:
         try:
-            winsound.PlaySound(None, winsound.SND_PURGE)
+            ctypes.windll.winmm.mciSendStringW(f"stop {alias}", None, 0, None)
         except Exception:
             pass
+        try:
+            ctypes.windll.winmm.mciSendStringW(f"close {alias}", None, 0, None)
+        except Exception:
+            pass
+        global _ACTIVE_MCI_ALIAS
+        _ACTIVE_MCI_ALIAS = None
 
 
 def speak_text(text: str, language: str = "en") -> None:
@@ -98,21 +120,7 @@ def speak_text(text: str, language: str = "en") -> None:
 
     try:
         print(f"Generating speech for voice={voice} and text length={len(text)}")
-        _run_async(edge_tts.Communicate(text, voice=voice).save(str(audio_path)))
-
-        if sys.platform.startswith("win"):
-            wav_path = audio_path.with_suffix(".wav")
-            ffmpeg = shutil.which("ffmpeg")
-            if ffmpeg:
-                subprocess.run(
-                    [ffmpeg, "-y", "-i", str(audio_path), "-acodec", "pcm_s16le", "-ar", "16000", str(wav_path)],
-                    check=False,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                if wav_path.exists():
-                    audio_path = wav_path
-
+        _run_async(edge_tts.Communicate(text, voice=voice, rate="+15%").save(str(audio_path)))
         print(f"Playing output file: {audio_path}")
         _play_audio_file(audio_path)
     finally:

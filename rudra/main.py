@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw
 from agent import agent_response, detect_tool_call
 from llm import query_llm
 from memory.scriptures import query as query_scripture
-from stt import transcribe_audio
+from stt import prepare_stt_calibration, transcribe_audio
 from tts import speak_text, stop_speaking
 from wakeword import start_wakeword_listener, stop_wakeword_listener
 
@@ -119,8 +119,10 @@ class RudraTray:
 
             try:
                 print("Stage 1: transcribing user speech...")
-                user_text = transcribe_audio()
-                print(f"Stage 1 result: {user_text!r}")
+                speech_result = transcribe_audio()
+                user_text = speech_result.get("text", "") if isinstance(speech_result, dict) else str(speech_result)
+                language = speech_result.get("language") if isinstance(speech_result, dict) else None
+                print(f"Stage 1 result: {user_text!r} (language={language})")
             except Exception as exc:
                 print(f"Speech transcription failed: {exc}")
                 traceback.print_exc()
@@ -131,7 +133,7 @@ class RudraTray:
                 self._notify("No speech detected. Please try again.")
                 return
 
-            language = detect_language(user_text)
+            language = language or detect_language(user_text)
             if detect_tool_call(user_text):
                 try:
                     print("Stage 2: dispatching agent tool call...")
@@ -184,6 +186,7 @@ class RudraTray:
             self._processing = False
 
     def start(self) -> None:
+        prepare_stt_calibration()
         start_wakeword_listener(self._on_wake, str(MODEL_PATH))
         self._notify("Rudra is running in the tray. Say 'Rudra' to wake it.")
         self.icon.run()
