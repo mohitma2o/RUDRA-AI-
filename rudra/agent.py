@@ -7,7 +7,8 @@ answering a general question.
 
 import json
 import re
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 try:
     from rudra.skills.browser import google_search, open_url
@@ -19,6 +20,29 @@ except ImportError:  # pragma: no cover - supports direct script execution
     from skills.system import APP_COMMAND_MAP, close_application, get_system_stats, open_application
 
 APP_WHITELIST = sorted(APP_COMMAND_MAP.keys(), key=len, reverse=True)
+
+
+def get_default_search_dirs() -> List[str]:
+    """Return sensible default directories to search for user files."""
+    home = Path.home()
+    candidates = [
+        home / "Desktop",
+        home / "Documents",
+        home / "Downloads",
+        home,
+        Path.cwd(),
+    ]
+    seen = set()
+    valid: List[str] = []
+    for d in candidates:
+        try:
+            resolved = str(d.resolve())
+            if resolved not in seen and d.exists():
+                seen.add(resolved)
+                valid.append(resolved)
+        except Exception:
+            continue
+    return valid
 
 
 def _pick_app_name(prompt: str) -> Optional[str]:
@@ -46,7 +70,7 @@ def detect_tool_call(prompt: str) -> Optional[Dict[str, Any]]:
         if match:
             name = match.group(1).strip()
             if name:
-                return {"tool": "search_file", "args": {"name": name, "directories": ["C:/", "D:/", "."]}}
+                return {"tool": "search_file", "args": {"name": name, "directories": get_default_search_dirs()}}
 
     if re.search(r"\b(google|search the web|browse to|visit|open url)\b", text):
         match = re.search(r"(?:google|search the web|browse to|visit|open url)\s+(.+)", prompt, flags=re.IGNORECASE)
@@ -63,12 +87,37 @@ def detect_tool_call(prompt: str) -> Optional[Dict[str, Any]]:
             target = match.group(1).strip()
             return {"tool": "close_application", "args": {"name": target}}
 
-    if re.search(r"\b(open file|open)\b", text) and ("." in text or "file" in text or "document" in text or "folder" in text):
-        match = re.search(r"(?:open file|open)\s+([A-Za-z0-9_\\/.-]+)", prompt, flags=re.IGNORECASE)
+    if re.search(r"\b(?:open file|open)\b", text):
+        match = re.search(r"(?:open file|open)\s+(.+)", prompt, flags=re.IGNORECASE)
         if match:
-            return {"tool": "open_file", "args": {"path": match.group(1).strip()}}
+            target = match.group(1).strip()
+            # Strip conversational filler and determiners from spoken text
+            target = re.sub(
+                r"\b(?:please|for me|now|right now|on my computer|on my pc)\b",
+                "", target, flags=re.IGNORECASE,
+            ).strip()
+            target = re.sub(
+                r"^(?:my|the|a|an)\s+(?:file\s+|document\s+)?",
+                "", target, flags=re.IGNORECASE,
+            ).strip()
+            target = target.strip("'\".,;:?! ")
+            if target:
+                return {"tool": "open_file", "args": {"name": target}}
 
     return None
+
+
+def _clean_spoken_filename(raw: str) -> str:
+    """Strip determiners and filler words from a spoken file reference."""
+    cleaned = re.sub(
+        r"\b(?:please|for me|now|right now|on my computer|on my pc)\b",
+        "", raw, flags=re.IGNORECASE,
+    ).strip()
+    cleaned = re.sub(
+        r"^(?:my|the|a|an)\s+(?:file\s+|document\s+)?",
+        "", cleaned, flags=re.IGNORECASE,
+    ).strip()
+    return cleaned.strip("'\".,;:?! ")
 
 
 def execute_tool_call(prompt: str) -> str:
@@ -85,10 +134,11 @@ def execute_tool_call(prompt: str) -> str:
             result = open_application(args.get("name", ""))
             return f"Done — {result}"
         if tool == "search_file":
-            results = search_file(args.get("name", ""), args.get("directories", ["."]))
+            dirs = args.get("directories") or get_default_search_dirs()
+            results = search_file(args.get("name", ""), dirs)
             if not results:
-                return "Done — No matching files found."
-            return f"Done — Found {len(results)} match(es): {', '.join(results[:3])}"
+                return f"Done — No matching files found for '{args.get('name', '')}'."
+            return f"Done — Found {len(results)} match(es): {', '.join(Path(r).name for r in results[:3])}"
         if tool == "google_search":
             result = google_search(args.get("query", ""))
             return f"Done — {result}"
@@ -98,8 +148,53 @@ def execute_tool_call(prompt: str) -> str:
             result = close_application(args.get("name", ""))
             return f"Done — {result}"
         if tool == "open_file":
-            result = open_file(args.get("path", ""))
-            return f"Done — {result}"
+            raw_target = (args.get("name") or "").strip()
+            if not raw_target:
+                return "Please specify the file to open."
+
+            # Always search first — don't pass raw spoken text to open_file()
+            # as a literal path; it will never be a valid path.
+            directories = args.get("directories") or get_default_search_dirs()
+            clean_name = _clean_spoken_filename(raw_target)
+            search_term = clean_name or raw_target
+
+            matches = search_file(search_term, directories)
+            # Also try the raw spoken form if cleaning changed it
+            if not matches and search_term.lower() != raw_target.lower():
+                matches = search_file(raw_target, directories)
+
+            if not matches:
+                return f"I couldn't find a file matching '{raw_target}'."
+
+            def rank_key(path_str: str):
+                p = Path(path_str)
+                name_lower = p.name.lower()
+                stem_lower = p.stem.lower()
+                query_lower = search_term.lower()
+                # Exact filename or stem match scores highest
+                is_exact = (
+                    name_lower == query_lower
+                    or stem_lower == query_lower
+                    or name_lower == raw_target.lower()
+                    or stem_lower == raw_target.lower()
+                )
+                try:
+                    mtime = p.stat().st_mtime
+                except Exception:
+                    mtime = 0
+                return (1 if is_exact else 0, mtime)
+
+            matches.sort(key=rank_key, reverse=True)
+            best_match = matches[0]
+
+            open_result = open_file(best_match)
+            if len(matches) > 1:
+                candidate_names = ", ".join(Path(m).name for m in matches[:3])
+                return (
+                    f"Done — Opened {Path(best_match).name} "
+                    f"(selected from {len(matches)} matches: {candidate_names})."
+                )
+            return f"Done — {open_result}"
         if tool == "open_url":
             result = open_url(args.get("url", ""))
             return f"Done — {result}"

@@ -11,15 +11,34 @@ from typing import List
 def search_file(name: str, directories: List[str]) -> List[str]:
     """Search for files matching the name across the provided directories."""
     matches: List[str] = []
-    lowered = name.lower()
+    lowered = name.lower().strip()
+    if not lowered:
+        return []
+
+    skip_dirs = {"appdata", "node_modules", ".git", ".gemini", ".vscode", "$recycle.bin"}
+    seen: set = set()
 
     for base_dir in directories:
         root = Path(base_dir)
         if not root.exists():
             continue
-        for path in root.rglob("*"):
-            if path.is_file() and lowered in path.name.lower():
-                matches.append(str(path.resolve()))
+
+        try:
+            for current_root, dirs, files in os.walk(str(root)):
+                dirs[:] = [
+                    d for d in dirs
+                    if not d.startswith(".")
+                    and d.lower() not in skip_dirs
+                    and not d.startswith("$")
+                ]
+                for f in files:
+                    if lowered in f.lower():
+                        full_path = str((Path(current_root) / f).resolve())
+                        if full_path not in seen:
+                            seen.add(full_path)
+                            matches.append(full_path)
+        except (PermissionError, OSError):
+            continue
 
     return matches
 
