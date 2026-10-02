@@ -120,6 +120,40 @@ def _clean_spoken_filename(raw: str) -> str:
     return cleaned.strip("'\".,;:?! ")
 
 
+def _resolve_open_file_target(raw_target: str, directories: Optional[List[str]] = None) -> tuple[Optional[str], List[str], str]:
+    """Search candidate dirs first and rank the best real file match for a spoken name."""
+    directories = directories or get_default_search_dirs()
+    clean_name = _clean_spoken_filename(raw_target)
+    search_term = clean_name or raw_target
+
+    matches = search_file(search_term, directories)
+    if not matches and search_term.lower() != raw_target.lower():
+        matches = search_file(raw_target, directories)
+
+    if not matches:
+        return None, [], search_term
+
+    def rank_key(path_str: str):
+        p = Path(path_str)
+        name_lower = p.name.lower()
+        stem_lower = p.stem.lower()
+        query_lower = search_term.lower()
+        is_exact = (
+            name_lower == query_lower
+            or stem_lower == query_lower
+            or name_lower == raw_target.lower()
+            or stem_lower == raw_target.lower()
+        )
+        try:
+            mtime = p.stat().st_mtime
+        except Exception:
+            mtime = 0
+        return (1 if is_exact else 0, mtime)
+
+    ordered_matches = sorted(matches, key=rank_key, reverse=True)
+    return search_term, ordered_matches, search_term
+
+
 def execute_tool_call(prompt: str) -> str:
     """Run a tool action represented by the user message and return the result."""
     action = detect_tool_call(prompt)
@@ -152,41 +186,11 @@ def execute_tool_call(prompt: str) -> str:
             if not raw_target:
                 return "Please specify the file to open."
 
-            # Always search first — don't pass raw spoken text to open_file()
-            # as a literal path; it will never be a valid path.
-            directories = args.get("directories") or get_default_search_dirs()
-            clean_name = _clean_spoken_filename(raw_target)
-            search_term = clean_name or raw_target
-
-            matches = search_file(search_term, directories)
-            # Also try the raw spoken form if cleaning changed it
-            if not matches and search_term.lower() != raw_target.lower():
-                matches = search_file(raw_target, directories)
-
+            search_term, matches, _ = _resolve_open_file_target(raw_target, args.get("directories"))
             if not matches:
-                return f"I couldn't find a file matching '{raw_target}'."
+                return f"I couldn't find a file matching '{search_term or raw_target}'."
 
-            def rank_key(path_str: str):
-                p = Path(path_str)
-                name_lower = p.name.lower()
-                stem_lower = p.stem.lower()
-                query_lower = search_term.lower()
-                # Exact filename or stem match scores highest
-                is_exact = (
-                    name_lower == query_lower
-                    or stem_lower == query_lower
-                    or name_lower == raw_target.lower()
-                    or stem_lower == raw_target.lower()
-                )
-                try:
-                    mtime = p.stat().st_mtime
-                except Exception:
-                    mtime = 0
-                return (1 if is_exact else 0, mtime)
-
-            matches.sort(key=rank_key, reverse=True)
             best_match = matches[0]
-
             open_result = open_file(best_match)
             if len(matches) > 1:
                 candidate_names = ", ".join(Path(m).name for m in matches[:3])

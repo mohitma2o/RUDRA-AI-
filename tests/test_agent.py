@@ -62,11 +62,22 @@ class AgentToolDispatchTests(unittest.TestCase):
         self.assertIsNotNone(action)
         self.assertNotIn("path", action["args"])
 
+    def test_open_file_missing_match_speaks_clear_not_found(self):
+        """A missing file should speak a friendly message rather than a raw path error."""
+        result = self._run_execute_tool_call("open does not exist anywhere here")
+        self.assertIn("I couldn't find a file matching", result)
+        self.assertNotIn("File not found:", result)
+
     def test_app_takes_precedence_over_file(self):
         """'open notepad' should match the app, not the file handler."""
         action = detect_tool_call("open notepad")
         self.assertIsNotNone(action)
         self.assertEqual(action["tool"], "open_application")
+
+    @staticmethod
+    def _run_execute_tool_call(prompt: str) -> str:
+        from rudra.agent import execute_tool_call
+        return execute_tool_call(prompt)
 
 
 if __name__ == "__main__":
