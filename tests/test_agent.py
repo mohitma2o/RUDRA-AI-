@@ -1,7 +1,7 @@
 import unittest
 
 from rudra.agent import detect_tool_call
-from rudra.skills.system import APP_COMMAND_MAP
+from rudra.skills.system import APP_COMMAND_MAP, _match_app_in_list
 
 
 class AgentToolDispatchTests(unittest.TestCase):
@@ -16,10 +16,46 @@ class AgentToolDispatchTests(unittest.TestCase):
         self.assertIsNotNone(detect_tool_call("open the terminal"))
         self.assertIsNotNone(detect_tool_call("open file explorer"))
 
+    def test_unknown_open_target_tries_application_resolution(self):
+        action = detect_tool_call("open camera")
+        self.assertEqual(action["tool"], "open_application")
+        self.assertEqual(action["args"]["name"], "camera")
+
+    def test_installed_app_match_is_case_insensitive_and_fuzzy(self):
+        apps = [{"Name": "Camera", "AppID": "camera-id"}]
+        self.assertEqual(_match_app_in_list("CAMERA", apps), apps[0])
+        self.assertEqual(_match_app_in_list("camer", apps), apps[0])
+        self.assertIsNone(_match_app_in_list("unrelated", apps))
+
     def test_windows_app_map_uses_real_commands(self):
         self.assertEqual(APP_COMMAND_MAP["calculator"], "calc")
         self.assertEqual(APP_COMMAND_MAP["terminal"], "wt")
         self.assertEqual(APP_COMMAND_MAP["file explorer"], "explorer")
+
+    def test_indexed_apps_do_not_bypass_dynamic_resolution(self):
+        for app in ("chrome", "google chrome", "edge", "word", "excel", "spotify"):
+            self.assertNotIn(app, APP_COMMAND_MAP)
+
+    def test_open_application_failure_does_not_say_done(self):
+        from unittest.mock import patch
+
+        with patch("rudra.agent.open_application", return_value="Failed to open 'chrome'. Application did not start."):
+            result = self._run_execute_tool_call("open chrome")
+            self.assertNotIn("Done", result)
+            self.assertEqual(result, "Failed to open 'chrome'. Application did not start.")
+
+    def test_open_application_direct_failure(self):
+        from rudra.skills.system import open_application
+
+        res = open_application("nonexistent_app_xyz", timeout=0.1)
+        self.assertIn("Failed to open", res)
+
+    def test_open_application_success_says_done(self):
+        from unittest.mock import patch
+
+        with patch("rudra.agent.open_application", return_value="Opening notepad now."):
+            result = self._run_execute_tool_call("open notepad")
+            self.assertEqual(result, "Done — Opening notepad now.")
 
     def test_detect_search_file_action(self):
         action = detect_tool_call("search for my report in documents folder")
@@ -34,10 +70,10 @@ class AgentToolDispatchTests(unittest.TestCase):
     # ── File-open spoken phrase tests ──────────────────────────────
 
     def test_open_my_resume_captures_full_phrase(self):
-        """'open my resume' should route to open_file with name='resume'."""
+        """Generic open phrases try app resolution before file search."""
         action = detect_tool_call("open my resume")
         self.assertIsNotNone(action)
-        self.assertEqual(action["tool"], "open_file")
+        self.assertEqual(action["tool"], "open_application")
         self.assertIn("resume", action["args"]["name"].lower())
         # Should NOT have "my" left in the name
         self.assertNotIn("my", action["args"]["name"].lower().split())
@@ -46,25 +82,30 @@ class AgentToolDispatchTests(unittest.TestCase):
         """'open project proposal' should capture the full multi-word name."""
         action = detect_tool_call("open project proposal")
         self.assertIsNotNone(action)
-        self.assertEqual(action["tool"], "open_file")
+        self.assertEqual(action["tool"], "open_application")
         self.assertIn("project proposal", action["args"]["name"].lower())
 
     def test_open_file_strips_filler(self):
         """'open my document budget please' should strip 'my', 'document', 'please'."""
-        action = detect_tool_call("open my document budget please")
+        action = detect_tool_call("open file my document budget please")
         self.assertIsNotNone(action)
         self.assertEqual(action["tool"], "open_file")
         self.assertIn("budget", action["args"]["name"].lower())
 
     def test_open_file_does_not_return_path(self):
         """The open_file args should only have 'name', not 'path'."""
-        action = detect_tool_call("open my resume")
+        action = detect_tool_call("open file my resume")
         self.assertIsNotNone(action)
         self.assertNotIn("path", action["args"])
 
     def test_open_file_missing_match_speaks_clear_not_found(self):
         """A missing file should speak a friendly message rather than a raw path error."""
-        result = self._run_execute_tool_call("open does not exist anywhere here")
+        from unittest.mock import patch
+
+        with patch("rudra.agent.open_application", return_value="Failed to open 'does not exist anywhere here'. Application not found."), patch(
+            "rudra.agent.search_file", return_value=[]
+        ):
+            result = self._run_execute_tool_call("open does not exist anywhere here")
         self.assertIn("I couldn't find a file matching", result)
         self.assertNotIn("File not found:", result)
 
@@ -73,6 +114,15 @@ class AgentToolDispatchTests(unittest.TestCase):
         action = detect_tool_call("open notepad")
         self.assertIsNotNone(action)
         self.assertEqual(action["tool"], "open_application")
+
+    def test_open_falls_back_to_file_when_no_app_match(self):
+        from unittest.mock import patch
+
+        with patch("rudra.agent.open_application", return_value="Failed to open 'resume'. Application not found."), patch(
+            "rudra.agent.search_file", return_value=[]
+        ):
+            result = self._run_execute_tool_call("open resume")
+        self.assertIn("I couldn't find a file matching 'resume'", result)
 
     @staticmethod
     def _run_execute_tool_call(prompt: str) -> str:

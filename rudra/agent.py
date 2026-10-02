@@ -13,13 +13,11 @@ from typing import Any, Dict, List, Optional
 try:
     from rudra.skills.browser import google_search, open_url
     from rudra.skills.files import open_file, search_file
-    from rudra.skills.system import APP_COMMAND_MAP, close_application, get_system_stats, open_application
+    from rudra.skills.system import close_application, get_system_stats, open_application
 except ImportError:  # pragma: no cover - supports direct script execution
     from skills.browser import google_search, open_url
     from skills.files import open_file, search_file
-    from skills.system import APP_COMMAND_MAP, close_application, get_system_stats, open_application
-
-APP_WHITELIST = sorted(APP_COMMAND_MAP.keys(), key=len, reverse=True)
+    from skills.system import close_application, get_system_stats, open_application
 
 
 def get_default_search_dirs() -> List[str]:
@@ -45,14 +43,6 @@ def get_default_search_dirs() -> List[str]:
     return valid
 
 
-def _pick_app_name(prompt: str) -> Optional[str]:
-    text = prompt.lower().strip()
-    for app in APP_WHITELIST:
-        if app in text:
-            return app
-    return None
-
-
 def detect_tool_call(prompt: str) -> Optional[Dict[str, Any]]:
     """Detect whether the user's request should trigger a tool call."""
     if not prompt:
@@ -60,10 +50,22 @@ def detect_tool_call(prompt: str) -> Optional[Dict[str, Any]]:
 
     text = prompt.lower().strip()
 
-    if re.search(r"\b(open|launch|start|run|activate|begin)\b", text):
-        app_name = _pick_app_name(text)
-        if app_name:
-            return {"tool": "open_application", "args": {"name": app_name}}
+    if re.search(r"\b(open url|browse to|visit|google|search the web)\b", text):
+        match = re.search(r"(?:google|search the web|browse to|visit|open url)\s+(.+)", prompt, flags=re.IGNORECASE)
+        if match:
+            return {"tool": "google_search", "args": {"query": match.group(1).strip()}}
+
+    explicit_file = re.search(r"\bopen file\s+(.+)", prompt, flags=re.IGNORECASE)
+    if explicit_file:
+        target = _clean_spoken_filename(explicit_file.group(1))
+        if target and target.lower() != "explorer":
+            return {"tool": "open_file", "args": {"name": target}}
+
+    open_match = re.search(r"\b(?:open|launch|start|run|activate|begin)\s+(.+)", prompt, flags=re.IGNORECASE)
+    if open_match:
+        target = _clean_spoken_filename(open_match.group(1))
+        if target:
+            return {"tool": "open_application", "args": {"name": target}}
 
     if re.search(r"\b(find|search|locate|where is|where's)\b", text):
         match = re.search(r"(?:find|search|locate|where is|where's)\s+(.+?)(?: in | on | from |$)", prompt, flags=re.IGNORECASE)
@@ -71,12 +73,6 @@ def detect_tool_call(prompt: str) -> Optional[Dict[str, Any]]:
             name = match.group(1).strip()
             if name:
                 return {"tool": "search_file", "args": {"name": name, "directories": get_default_search_dirs()}}
-
-    if re.search(r"\b(google|search the web|browse to|visit|open url)\b", text):
-        match = re.search(r"(?:google|search the web|browse to|visit|open url)\s+(.+)", prompt, flags=re.IGNORECASE)
-        if match:
-            query = match.group(1).strip()
-            return {"tool": "google_search", "args": {"query": query}}
 
     if re.search(r"\b(system stats|cpu|memory|ram|disk|battery)\b", text):
         return {"tool": "get_system_stats", "args": {}}
@@ -86,23 +82,6 @@ def detect_tool_call(prompt: str) -> Optional[Dict[str, Any]]:
         if match:
             target = match.group(1).strip()
             return {"tool": "close_application", "args": {"name": target}}
-
-    if re.search(r"\b(?:open file|open)\b", text):
-        match = re.search(r"(?:open file|open)\s+(.+)", prompt, flags=re.IGNORECASE)
-        if match:
-            target = match.group(1).strip()
-            # Strip conversational filler and determiners from spoken text
-            target = re.sub(
-                r"\b(?:please|for me|now|right now|on my computer|on my pc)\b",
-                "", target, flags=re.IGNORECASE,
-            ).strip()
-            target = re.sub(
-                r"^(?:my|the|a|an)\s+(?:file\s+|document\s+)?",
-                "", target, flags=re.IGNORECASE,
-            ).strip()
-            target = target.strip("'\".,;:?! ")
-            if target:
-                return {"tool": "open_file", "args": {"name": target}}
 
     return None
 
@@ -154,6 +133,22 @@ def _resolve_open_file_target(raw_target: str, directories: Optional[List[str]] 
     return search_term, ordered_matches, search_term
 
 
+def _execute_open_file(raw_target: str, directories: Optional[List[str]] = None) -> str:
+    search_term, matches, _ = _resolve_open_file_target(raw_target, directories)
+    if not matches:
+        return f"I couldn't find a file matching '{search_term or raw_target}'."
+
+    best_match = matches[0]
+    open_result = open_file(best_match)
+    if len(matches) > 1:
+        candidate_names = ", ".join(Path(match).name for match in matches[:3])
+        return (
+            f"Done — Opened {Path(best_match).name} "
+            f"(selected from {len(matches)} matches: {candidate_names})."
+        )
+    return f"Done — {open_result}"
+
+
 def execute_tool_call(prompt: str) -> str:
     """Run a tool action represented by the user message and return the result."""
     action = detect_tool_call(prompt)
@@ -165,7 +160,16 @@ def execute_tool_call(prompt: str) -> str:
 
     try:
         if tool == "open_application":
-            result = open_application(args.get("name", ""))
+            app_name = args.get("name", "")
+            result = open_application(app_name)
+            if result.endswith("Application not found.") and re.match(r"\s*open\b", prompt, flags=re.IGNORECASE):
+                return _execute_open_file(app_name)
+            if (
+                result.startswith("Failed to open")
+                or result.startswith("Could not open")
+                or result.startswith("No application")
+            ):
+                return result
             return f"Done — {result}"
         if tool == "search_file":
             dirs = args.get("directories") or get_default_search_dirs()
@@ -185,20 +189,7 @@ def execute_tool_call(prompt: str) -> str:
             raw_target = (args.get("name") or "").strip()
             if not raw_target:
                 return "Please specify the file to open."
-
-            search_term, matches, _ = _resolve_open_file_target(raw_target, args.get("directories"))
-            if not matches:
-                return f"I couldn't find a file matching '{search_term or raw_target}'."
-
-            best_match = matches[0]
-            open_result = open_file(best_match)
-            if len(matches) > 1:
-                candidate_names = ", ".join(Path(m).name for m in matches[:3])
-                return (
-                    f"Done — Opened {Path(best_match).name} "
-                    f"(selected from {len(matches)} matches: {candidate_names})."
-                )
-            return f"Done — {open_result}"
+            return _execute_open_file(raw_target, args.get("directories"))
         if tool == "open_url":
             result = open_url(args.get("url", ""))
             return f"Done — {result}"
