@@ -8,14 +8,12 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# Node
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# PyInstaller output
+rudra/build/
+rudra/dist/
 
-# Frontend build output
-frontend/dist/
+# ChromaDB auto-generated persistence
+rudra/rudra_chroma/
 
 # Editor files
 .vscode/
@@ -24,4 +22,3 @@ frontend/dist/
 
 # OS files
 Thumbs.db
-node_modules
