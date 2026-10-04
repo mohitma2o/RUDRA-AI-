@@ -62,6 +62,7 @@ extra_hiddenimports = [
     "skills",
     "skills.browser",
     "skills.files",
+    "skills.screen",
     "skills.system",
     "skills.vision",
 ]

@@ -7,6 +7,82 @@ import sys
 from pathlib import Path
 from typing import List
 
+MAX_DOCUMENT_TEXT_CHARS = 3000
+
+
+def open_folder(path: str) -> str:
+    """Open a folder path or a common user-folder shortcut."""
+    shortcut = path.strip().lower().strip("\\/")
+    known_folders = {
+        "desktop": Path.home() / "Desktop",
+        "documents": Path.home() / "Documents",
+        "downloads": Path.home() / "Downloads",
+    }
+    target = known_folders.get(shortcut, Path(path).expanduser())
+
+    if not target.exists():
+        return f"Folder not found: {target}"
+    if not target.is_dir():
+        return f"Path is not a folder: {target}"
+
+    resolved = str(target.resolve())
+    try:
+        if os.name == "nt":
+            os.startfile(resolved)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", resolved], check=False)
+        else:
+            subprocess.run(["xdg-open", resolved], check=False)
+        return f"Opened folder: {resolved}"
+    except Exception as exc:
+        return f"Failed to open folder: {exc}"
+
+
+def read_document(path: str) -> str:
+    """Extract text from a supported document, capped for LLM summarization."""
+    target = Path(path)
+    if not target.is_file():
+        return f"File not found: {path}"
+
+    suffix = target.suffix.lower()
+    try:
+        if suffix in {".txt", ".md"}:
+            text = target.read_text(encoding="utf-8", errors="replace")
+        elif suffix == ".docx":
+            from docx import Document
+
+            document = Document(str(target))
+            parts = [paragraph.text for paragraph in document.paragraphs if paragraph.text]
+            parts.extend(
+                " | ".join(cell.text for cell in row.cells)
+                for table in document.tables
+                for row in table.rows
+            )
+            text = "\n".join(parts)
+        elif suffix == ".pdf":
+            from pypdf import PdfReader
+
+            reader = PdfReader(str(target))
+            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        else:
+            return f"Unsupported document type: {suffix or '(no extension)'}"
+    except ImportError:
+        if suffix == ".docx":
+            return "python-docx is not installed. Install it with `pip install python-docx`."
+        if suffix == ".pdf":
+            return "pypdf is not installed. Install it with `pip install pypdf`."
+        return "Document reader dependency is missing."
+    except Exception as exc:
+        return f"Failed to read document: {exc}"
+
+    text = text.strip()
+    if not text:
+        return "No readable text found in the document."
+    if len(text) > MAX_DOCUMENT_TEXT_CHARS:
+        marker = "\n[Text truncated.]"
+        text = text[: MAX_DOCUMENT_TEXT_CHARS - len(marker)].rstrip() + marker
+    return text
+
 
 def search_file(name: str, directories: List[str]) -> List[str]:
     """Search for files matching the name across the provided directories."""

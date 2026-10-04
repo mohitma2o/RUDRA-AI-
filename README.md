@@ -13,7 +13,8 @@ which uses Microsoft Neural voices via edge-tts).
 - **Speech-to-text** — faster-whisper (`base` model, runs locally)
 - **LLM responses** — Ollama local inference; model selected by hardware (see below)
 - **Text-to-speech** — edge-tts with Hindi (`hi-IN-MadhurNeural`) default
-- **Desktop automation** — open/close apps, search files, take screenshots, web search
+- **Desktop automation** — open/close apps, folders, search files, take photos, web search
+- **Screen and document reading** — OCR-based screen summaries and text extraction from TXT, Markdown, DOCX, and PDF files
 - **Scripture-grounded RAG** — ChromaDB + sentence-transformers pipeline is fully wired;
   corpus ingestion is deferred by design (data/ is currently empty, returns gracefully)
 - **System tray UI** — pystray icon with Pause / Status / Quit menu
@@ -54,6 +55,14 @@ cp .env.example .env
 python main.py
 ```
 
+### Screen OCR setup
+
+Screen reading also requires the separate Tesseract OCR Windows binary; installing
+the Python `pytesseract` package alone is not enough. Install Tesseract using the
+[UB-Mannheim Windows installer](https://github.com/UB-Mannheim/tesseract/wiki),
+enable adding Tesseract to `PATH` during installation, then restart Rudra. Verify
+the binary is available by running `tesseract --version` in a new terminal.
+
 A tray icon appears. Right-click → **Quit** to exit.
 
 ---
@@ -91,6 +100,7 @@ RUDRA-AI-/
 │   └── skills/
 │       ├── browser.py
 │       ├── files.py
+│       ├── screen.py
 │       ├── system.py
 │       └── vision.py
 └── tests/

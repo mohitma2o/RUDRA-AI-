@@ -11,13 +11,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
-    from rudra.skills.browser import google_search, open_url
-    from rudra.skills.files import open_file, search_file
+    from rudra.skills.browser import compose_email, google_search, open_url
+    from rudra.skills.files import open_file, open_folder, read_document, search_file
+    from rudra.skills.screen import read_screen
     from rudra.skills.system import close_application, get_system_stats, open_application
+    from rudra.skills.vision import capture_photo, reverse_image_search
 except ImportError:  # pragma: no cover - supports direct script execution
-    from skills.browser import google_search, open_url
-    from skills.files import open_file, search_file
+    from skills.browser import compose_email, google_search, open_url
+    from skills.files import open_file, open_folder, read_document, search_file
+    from skills.screen import read_screen
     from skills.system import close_application, get_system_stats, open_application
+    from skills.vision import capture_photo, reverse_image_search
 
 
 def get_default_search_dirs() -> List[str]:
@@ -54,6 +58,37 @@ def detect_tool_call(prompt: str) -> Optional[Dict[str, Any]]:
         match = re.search(r"(?:google|search the web|browse to|visit|open url)\s+(.+)", prompt, flags=re.IGNORECASE)
         if match:
             return {"tool": "google_search", "args": {"query": match.group(1).strip()}}
+
+    if re.search(r"\btake\s+(?:a\s+)?(?:picture|photo)\b", text):
+        return {
+            "tool": "capture_photo",
+            "args": {"reverse_search": bool(re.search(r"\bsearch\s+for\s+it\b", text))},
+        }
+
+    email_match = re.search(r"\bsend\s+an\s+email\s+to\s+([^\s,;]+)|\bemail\s+([^\s,;]+)", prompt, flags=re.IGNORECASE)
+    if email_match:
+        recipient = (email_match.group(1) or email_match.group(2)).strip().strip("<>.,;:!?").strip("\"'")
+        if recipient:
+            return {"tool": "compose_email", "args": {"to": recipient}}
+
+    if re.search(r"\b(?:what(?:'s| is) on my screen|read my screen|read this page)\b", text):
+        return {"tool": "read_screen", "args": {}}
+
+    document_match = re.search(r"\bwhat does\s+(.+?)\s+say\b", prompt, flags=re.IGNORECASE)
+    if not document_match:
+        document_match = re.search(r"\b(?:summarize|read me)\s+(.+)", prompt, flags=re.IGNORECASE)
+    if document_match:
+        target = _clean_spoken_filename(document_match.group(1))
+        if target:
+            return {"tool": "read_document", "args": {"name": target}}
+
+    folder_match = re.search(
+        r"\bopen\s+(?:my\s+)?(desktop|documents|downloads)(?:\s+folder)?\b",
+        prompt,
+        flags=re.IGNORECASE,
+    )
+    if folder_match:
+        return {"tool": "open_folder", "args": {"path": folder_match.group(1)}}
 
     explicit_file = re.search(r"\bopen file\s+(.+)", prompt, flags=re.IGNORECASE)
     if explicit_file:
@@ -149,7 +184,41 @@ def _execute_open_file(raw_target: str, directories: Optional[List[str]] = None)
     return f"Done — {open_result}"
 
 
-def execute_tool_call(prompt: str) -> str:
+def _is_skill_error(result: str) -> bool:
+    return result.startswith((
+        "Failed",
+        "Unable",
+        "Could not",
+        "No readable text",
+        "Unsupported",
+        "File not found",
+        "Folder not found",
+        "Path is not a folder",
+        "OpenCV",
+        "mss ",
+        "pytesseract ",
+        "Tesseract OCR",
+        "python-docx ",
+        "pypdf ",
+        "Pillow ",
+            "Document reader dependency",
+            "Playwright ",
+            "Image file not found",
+            "No recipient",
+    ))
+
+
+def _summarize_extracted_text(text: str, source: str, llm_fn) -> str:
+    if not llm_fn:
+        return f"I couldn't summarize the {source} because the language model is unavailable."
+    prompt = f"Briefly summarize or read back the key content of this {source} text:\n{text[:3000]}"
+    try:
+        return f"Done — {llm_fn(prompt)}"
+    except Exception as exc:
+        return f"Failed to summarize {source}: {exc}"
+
+
+def execute_tool_call(prompt: str, llm_fn=None) -> str:
     """Run a tool action represented by the user message and return the result."""
     action = detect_tool_call(prompt)
     if not action:
@@ -171,6 +240,41 @@ def execute_tool_call(prompt: str) -> str:
             ):
                 return result
             return f"Done — {result}"
+        if tool == "capture_photo":
+            capture_result = capture_photo()
+            if not capture_result.startswith("Captured photo to "):
+                return capture_result
+            if not args.get("reverse_search"):
+                return f"Done — {capture_result}"
+            photo_path = capture_result.removeprefix("Captured photo to ")
+            if not Path(photo_path).is_file():
+                return f"Failed to locate captured photo: {photo_path}"
+            search_result = reverse_image_search(photo_path)
+            if _is_skill_error(search_result):
+                return f"{capture_result}; {search_result}"
+            return f"Done — {capture_result}; {search_result}"
+        if tool == "compose_email":
+            result = compose_email(args.get("to", ""), subject="", body="")
+            return result if _is_skill_error(result) else f"Done — {result}"
+        if tool == "open_folder":
+            result = open_folder(args.get("path", ""))
+            return result if _is_skill_error(result) else f"Done — {result}"
+        if tool == "read_screen":
+            text = read_screen()
+            if _is_skill_error(text):
+                return text
+            return _summarize_extracted_text(text, "screen", llm_fn)
+        if tool == "read_document":
+            target = args.get("name", "")
+            _, matches, search_term = _resolve_open_file_target(target)
+            supported = {".txt", ".md", ".docx", ".pdf"}
+            readable_matches = [path for path in matches if Path(path).suffix.lower() in supported]
+            if not readable_matches:
+                return f"I couldn't find a readable document matching '{search_term or target}'."
+            text = read_document(readable_matches[0])
+            if _is_skill_error(text):
+                return text
+            return _summarize_extracted_text(text, "document", llm_fn)
         if tool == "search_file":
             dirs = args.get("directories") or get_default_search_dirs()
             results = search_file(args.get("name", ""), dirs)
@@ -201,7 +305,7 @@ def execute_tool_call(prompt: str) -> str:
 
 def agent_response(prompt: str, llm_fn) -> str:
     """Execute an agent-style action when the request is operational, otherwise ask the model."""
-    tool_result = execute_tool_call(prompt)
+    tool_result = execute_tool_call(prompt, llm_fn=llm_fn)
     if tool_result:
         return tool_result
 

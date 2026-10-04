@@ -1,6 +1,9 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 from rudra.agent import detect_tool_call
+from rudra.skills.files import MAX_DOCUMENT_TEXT_CHARS, read_document
 from rudra.skills.system import APP_COMMAND_MAP, _match_app_in_list
 
 
@@ -62,6 +65,86 @@ class AgentToolDispatchTests(unittest.TestCase):
         self.assertIsNotNone(action)
         self.assertEqual(action["tool"], "search_file")
         self.assertIn("report", action["args"]["name"].lower())
+
+    def test_detect_new_voice_commands(self):
+        expected = {
+            "take a picture": "capture_photo",
+            "take a photo": "capture_photo",
+            "take a picture and search for it": "capture_photo",
+            "email test@example.com": "compose_email",
+            "send an email to test@example.com": "compose_email",
+            "open my downloads folder": "open_folder",
+            "open downloads": "open_folder",
+            "what's on my screen": "read_screen",
+            "read my screen": "read_screen",
+            "read this page": "read_screen",
+            "what does README.md say": "read_document",
+            "summarize README.md": "read_document",
+            "read me README.md": "read_document",
+        }
+        for command, tool in expected.items():
+            with self.subTest(command=command):
+                self.assertEqual(detect_tool_call(command)["tool"], tool)
+
+    def test_email_command_passes_recipient_to_mail_draft(self):
+        from unittest.mock import patch
+
+        with patch("rudra.agent.compose_email", return_value="Opened URL: mailto:test@example.com") as compose:
+            result = self._run_execute_tool_call("email test@example.com")
+        compose.assert_called_once_with("test@example.com", subject="", body="")
+        self.assertIn("mailto:test@example.com", result)
+
+    def test_folder_command_opens_resolved_shortcut(self):
+        from unittest.mock import patch
+
+        with patch("rudra.agent.open_folder", return_value="Opened folder: Downloads") as opener:
+            result = self._run_execute_tool_call("open my downloads folder")
+        opener.assert_called_once_with("downloads")
+        self.assertEqual(result, "Done — Opened folder: Downloads")
+
+    def test_camera_reverse_search_requires_a_real_capture(self):
+        from unittest.mock import patch
+
+        with patch("rudra.agent.capture_photo", return_value="Unable to open webcam."), patch(
+            "rudra.agent.reverse_image_search"
+        ) as reverse_search:
+            result = self._run_execute_tool_call("take a picture and search for it")
+        self.assertEqual(result, "Unable to open webcam.")
+        reverse_search.assert_not_called()
+
+    def test_screen_text_is_summarized_with_length_cap(self):
+        from unittest.mock import patch
+
+        received = []
+
+        def summarize(prompt):
+            received.append(prompt)
+            return "A concise screen summary."
+
+        with patch("rudra.agent.read_screen", return_value="x" * 5000):
+            result = self._run_execute_tool_call("what's on my screen", llm_fn=summarize)
+        extracted_text = received[0].split("screen text:\n", 1)[1]
+        self.assertLessEqual(len(extracted_text), 3000)
+        self.assertEqual(result, "Done — A concise screen summary.")
+
+    def test_document_is_found_read_and_summarized(self):
+        from unittest.mock import patch
+
+        with patch("rudra.agent._resolve_open_file_target", return_value=("notes", ["notes.md"], "notes")), patch(
+            "rudra.agent.read_document", return_value="The document content."
+        ) as read, patch("rudra.agent._summarize_extracted_text", return_value="Done — Summary") as summarize:
+            result = self._run_execute_tool_call("summarize notes")
+        read.assert_called_once_with("notes.md")
+        summarize.assert_called_once_with("The document content.", "document", None)
+        self.assertEqual(result, "Done — Summary")
+
+    def test_document_extraction_is_capped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "large.txt"
+            path.write_text("x" * (MAX_DOCUMENT_TEXT_CHARS + 100), encoding="utf-8")
+            text = read_document(str(path))
+        self.assertLessEqual(len(text), MAX_DOCUMENT_TEXT_CHARS)
+        self.assertTrue(text.endswith("[Text truncated.]"))
 
     def test_general_question_has_no_action(self):
         action = detect_tool_call("what is the capital of France?")
@@ -125,9 +208,9 @@ class AgentToolDispatchTests(unittest.TestCase):
         self.assertIn("I couldn't find a file matching 'resume'", result)
 
     @staticmethod
-    def _run_execute_tool_call(prompt: str) -> str:
+    def _run_execute_tool_call(prompt: str, llm_fn=None) -> str:
         from rudra.agent import execute_tool_call
-        return execute_tool_call(prompt)
+        return execute_tool_call(prompt, llm_fn=llm_fn)
 
 
 if __name__ == "__main__":

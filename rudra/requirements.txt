@@ -17,3 +17,7 @@ keyboard
 psutil
 opencv-python
 playwright
+mss
+pytesseract
+python-docx
+pypdf
