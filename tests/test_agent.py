@@ -5,6 +5,7 @@ from pathlib import Path
 from rudra.agent import detect_tool_call
 from rudra.skills.files import MAX_DOCUMENT_TEXT_CHARS, read_document
 from rudra.skills.system import APP_COMMAND_MAP, _match_app_in_list
+from rudra.wakeword import _select_wakeword_trigger
 
 
 class AgentToolDispatchTests(unittest.TestCase):
@@ -19,7 +20,7 @@ class AgentToolDispatchTests(unittest.TestCase):
         self.assertIsNotNone(detect_tool_call("open the terminal"))
         self.assertIsNotNone(detect_tool_call("open file explorer"))
 
-    def test_unknown_open_target_tries_application_resolution(self):
+    def test_open_camera_routes_to_camera_application(self):
         action = detect_tool_call("open camera")
         self.assertEqual(action["tool"], "open_application")
         self.assertEqual(action["args"]["name"], "camera")
@@ -149,6 +150,93 @@ class AgentToolDispatchTests(unittest.TestCase):
     def test_general_question_has_no_action(self):
         action = detect_tool_call("what is the capital of France?")
         self.assertIsNone(action)
+
+    def test_wakeword_trigger_uses_reliable_threshold(self):
+        predictions = {"rudra": 0.48, "noise": 0.13}
+        self.assertEqual(_select_wakeword_trigger(predictions, threshold=0.45), "rudra")
+        self.assertIsNone(_select_wakeword_trigger({"noise": 0.13}, threshold=0.45))
+
+    def test_novel_phrases_are_not_regex_dispatches(self):
+        for phrase in (
+            "can you pull up chrome for me",
+            "I need to see what's going on with my downloads folder",
+            "snap a photo",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIsNone(detect_tool_call(phrase))
+
+    def test_tool_call_response_executes_and_sends_result_for_followup(self):
+        from unittest.mock import patch
+        from rudra.agent import agent_response
+
+        model_message = {
+            "content": "",
+            "tool_calls": [{"function": {"name": "open_application", "arguments": {"name": "Chrome"}}}],
+        }
+        calls = []
+        with patch("rudra.agent.open_application", return_value="Opening Chrome now."):
+            result = agent_response(
+                "can you pull up chrome for me",
+                lambda prompt: "fallback",
+                tool_call_fn=lambda prompt: {"message": model_message},
+                tool_followup_fn=lambda message, tool_messages: calls.extend(tool_messages) or "Chrome is open.",
+            )
+        self.assertEqual(result, "Chrome is open.")
+        self.assertEqual(calls, [{"role": "tool", "content": "Done — Opening Chrome now."}])
+
+    def test_regex_dispatch_remains_fallback_when_model_returns_plain_text(self):
+        from unittest.mock import patch
+        from rudra.agent import agent_response
+
+        plain_response = {"message": {"content": "I will open the Camera app.", "tool_calls": []}}
+        with patch("rudra.agent.open_application", return_value="Opening Camera now."):
+            result = agent_response(
+                "open camera",
+                lambda prompt: "fallback response",
+                tool_call_fn=lambda prompt: plain_response,
+            )
+
+        self.assertEqual(result, "Done — Opening Camera now.")
+
+    def test_failed_tool_followup_does_not_repeat_action(self):
+        from unittest.mock import patch
+        from rudra.agent import agent_response
+
+        model_response = {
+            "message": {
+                "content": "",
+                "tool_calls": [{"function": {"name": "open_application", "arguments": {"name": "Camera"}}}],
+            }
+        }
+        with patch("rudra.agent.open_application", return_value="Opening Camera now.") as open_app:
+            result = agent_response(
+                "open camera",
+                lambda prompt: "fallback",
+                tool_call_fn=lambda prompt: model_response,
+                tool_followup_fn=lambda message, tool_messages: (_ for _ in ()).throw(RuntimeError("Ollama stopped")),
+            )
+
+        self.assertEqual(open_app.call_count, 1)
+        self.assertIn("Opening Camera now.", result)
+
+    def test_camera_capture_tries_three_indices_and_reports_windows_setting(self):
+        from unittest.mock import Mock, patch
+        from rudra.skills.vision import capture_photo
+
+        cameras = []
+
+        def video_capture(index):
+            camera = Mock()
+            camera.isOpened.return_value = False
+            cameras.append(index)
+            return camera
+
+        with patch("cv2.VideoCapture", side_effect=video_capture), patch("cv2.imwrite"):
+            result = capture_photo()
+
+        self.assertEqual(cameras, [0, 1, 2])
+        self.assertIn('"Let desktop apps access your camera"', result)
+        self.assertIn("OpenCV emitted no native diagnostic", result)
 
     # ── File-open spoken phrase tests ──────────────────────────────
 

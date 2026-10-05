@@ -57,11 +57,9 @@ python main.py
 
 ### Screen OCR setup
 
-Screen reading also requires the separate Tesseract OCR Windows binary; installing
-the Python `pytesseract` package alone is not enough. Install Tesseract using the
-[UB-Mannheim Windows installer](https://github.com/UB-Mannheim/tesseract/wiki),
-enable adding Tesseract to `PATH` during installation, then restart Rudra. Verify
-the binary is available by running `tesseract --version` in a new terminal.
+Screen reading uses EasyOCR, installed with `pip install -r requirements.txt`.
+EasyOCR downloads its recognition model automatically the first time screen
+reading is used; no separate OCR binary or PATH configuration is required.
 
 A tray icon appears. Right-click → **Quit** to exit.
 

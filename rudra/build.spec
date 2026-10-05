@@ -17,6 +17,7 @@ for package in (
     "sentence_transformers",
     "openwakeword",
     "onnxruntime",
+    "easyocr",
 ):
     try:
         pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(package)

@@ -18,6 +18,6 @@ psutil
 opencv-python
 playwright
 mss
-pytesseract
+easyocr
 python-docx
 pypdf

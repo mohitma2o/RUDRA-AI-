@@ -15,8 +15,8 @@ from typing import Any, Optional
 import pystray
 from PIL import Image, ImageDraw
 
-from agent import agent_response, detect_tool_call
-from llm import query_llm
+from agent import agent_response
+from llm import complete_ollama_tool_call, get_llm_backend, query_llm, query_ollama_with_tools
 from memory.scriptures import query as query_scripture
 from stt import prepare_stt_calibration, transcribe_audio
 from tts import speak_text, stop_speaking
@@ -134,42 +134,47 @@ class RudraTray:
                 return
 
             language = language or detect_language(user_text)
-            if detect_tool_call(user_text):
-                try:
-                    print("Stage 2: dispatching agent tool call...")
-                    response = agent_response(user_text, lambda prompt: query_llm(prompt, language=language))
-                    print(f"Stage 2 result length: {len(response) if response else 0}")
-                except Exception as exc:
-                    print(f"Agent execution failed: {exc}")
-                    traceback.print_exc()
-                    self._notify(f"Agent execution failed: {exc}")
-                    return
-            else:
-                scripture_context: Optional[list[str]] = None
-                try:
-                    scripture_hits = query_scripture(user_text, k=3)
-                    if scripture_hits:
-                        scripture_context = [
-                            f"{hit.get('source', 'scripture')}: {hit.get('text', '')}"
-                            for hit in scripture_hits
-                            if hit.get('text')
-                        ]
-                        if scripture_context:
-                            self._notify("Scripture context found for your query.")
-                except Exception as exc:
-                    print(f"Scripture retrieval failed: {exc}")
-                    traceback.print_exc()
-                    self._notify(f"Scripture retrieval failed: {exc}")
+            scripture_context: Optional[list[str]] = None
+            try:
+                scripture_hits = query_scripture(user_text, k=3)
+                if scripture_hits:
+                    scripture_context = [
+                        f"{hit.get('source', 'scripture')}: {hit.get('text', '')}"
+                        for hit in scripture_hits
+                        if hit.get('text')
+                    ]
+                    if scripture_context:
+                        self._notify("Scripture context found for your query.")
+            except Exception as exc:
+                print(f"Scripture retrieval failed: {exc}")
+                traceback.print_exc()
 
-                try:
-                    print("Stage 2: sending prompt to LLM...")
-                    response = query_llm(user_text, context=scripture_context, language=language)
-                    print(f"Stage 2 result length: {len(response) if response else 0}")
-                except Exception as exc:
-                    print(f"LLM query failed: {exc}")
-                    traceback.print_exc()
-                    self._notify(f"LLM query failed: {exc}")
-                    return
+            try:
+                print("Stage 2: asking the model to answer or select a tool...")
+                use_tools = get_llm_backend() == "ollama"
+                response = agent_response(
+                    user_text,
+                    lambda prompt: query_llm(prompt, context=scripture_context, language=language),
+                    tool_call_fn=(
+                        lambda prompt: query_ollama_with_tools(
+                            prompt, context=scripture_context, language=language
+                        )
+                    ) if use_tools else None,
+                    tool_followup_fn=(
+                        lambda message, tool_messages: complete_ollama_tool_call(
+                            user_text, message, tool_messages,
+                            context=scripture_context, language=language,
+                        )
+                    ) if use_tools else None,
+                    context=scripture_context,
+                    language=language,
+                )
+                print(f"Stage 2 result length: {len(response) if response else 0}")
+            except Exception as exc:
+                print(f"LLM query failed: {exc}")
+                traceback.print_exc()
+                self._notify(f"LLM query failed: {exc}")
+                return
 
             try:
                 print("Stage 3: speaking response...")

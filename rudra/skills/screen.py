@@ -1,6 +1,9 @@
-"""Screen text extraction using Tesseract OCR."""
+"""Screen text extraction using EasyOCR."""
+
+_reader = None
 
 MAX_SCREEN_TEXT_CHARS = 3000
+MAX_OCR_IMAGE_SIDE = 1280
 
 
 def read_screen() -> str:
@@ -11,26 +14,32 @@ def read_screen() -> str:
         return "mss is not installed. Install it with `pip install mss`."
 
     try:
-        import pytesseract
+        import easyocr
+        import numpy as np
+        import cv2
     except ImportError:
-        return "pytesseract is not installed. Install it with `pip install pytesseract`."
-
-    try:
-        from PIL import Image
-    except ImportError:
-        return "Pillow is not installed. Install it with `pip install Pillow`."
+        return "EasyOCR or its image dependencies are not installed. Install them with `pip install easyocr opencv-python`."
 
     try:
         with mss.mss() as capture:
             monitor = capture.monitors[1] if len(capture.monitors) > 1 else capture.monitors[0]
             screenshot = capture.grab(monitor)
-            image = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
-        text = pytesseract.image_to_string(image).strip()
-    except pytesseract.pytesseract.TesseractNotFoundError:
-        return (
-            "Tesseract OCR is not installed or not on PATH. Install the Windows "
-            "Tesseract binary from the UB-Mannheim installer and restart Rudra."
-        )
+            image = np.frombuffer(screenshot.rgb, dtype=np.uint8).reshape(
+                screenshot.height, screenshot.width, 3
+            )
+        largest_side = max(image.shape[:2])
+        if largest_side > MAX_OCR_IMAGE_SIDE:
+            scale = MAX_OCR_IMAGE_SIDE / largest_side
+            resized_width = max(1, int(image.shape[1] * scale))
+            resized_height = max(1, int(image.shape[0] * scale))
+            image = cv2.resize(image, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+        global _reader
+        if _reader is None:
+            _reader = easyocr.Reader(["en"], gpu=False)
+        text = "\n".join(
+            line for line in _reader.readtext(image, detail=0, canvas_size=MAX_OCR_IMAGE_SIDE, mag_ratio=1.0)
+            if line
+        ).strip()
     except Exception as exc:
         return f"Failed to read screen: {exc}"
 

@@ -1,7 +1,6 @@
 """Vision skill helpers for webcam capture and reverse image search."""
 
 from pathlib import Path
-from typing import Optional
 
 
 def capture_photo(filename: str = "capture.jpg") -> str:
@@ -12,17 +11,50 @@ def capture_photo(filename: str = "capture.jpg") -> str:
         return "OpenCV is not installed. Install with `pip install opencv-python`."
 
     path = Path(filename)
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        return "Unable to open webcam."
+    errors = []
+    opencv_errors = []
+    captured_frame = None
 
-    ret, frame = cap.read()
-    cap.release()
-    if not ret or frame is None:
-        return "Failed to capture image from webcam."
+    def record_opencv_error(status, function_name, message, filename, line):
+        diagnostic = f"{function_name}: {message} (status={status}, line={line})"
+        opencv_errors.append(diagnostic)
+        print(f"OpenCV camera error: {diagnostic}")
+        return 0
+
+    previous_error_handler = cv2.redirectError(record_opencv_error)
+    try:
+        for camera_index in (0, 1, 2):
+            camera = None
+            try:
+                camera = cv2.VideoCapture(camera_index)
+                if not camera.isOpened():
+                    errors.append(f"camera index {camera_index}: OpenCV could not open the device")
+                    continue
+                ret, frame = camera.read()
+                if ret and frame is not None:
+                    captured_frame = frame
+                    break
+                errors.append(f"camera index {camera_index}: OpenCV opened the device but returned no frame")
+            except Exception as exc:
+                errors.append(f"camera index {camera_index}: {type(exc).__name__}: {exc}")
+            finally:
+                if camera is not None:
+                    camera.release()
+    finally:
+        cv2.redirectError(previous_error_handler)
+
+    if captured_frame is None:
+        details = "; ".join(opencv_errors + errors)
+        if not opencv_errors:
+            details = f"OpenCV emitted no native diagnostic; {details}"
+        return (
+            f"Unable to capture from webcams at indices 0, 1, or 2. OpenCV details: {details}. "
+            "If Windows privacy is blocking access, check Settings > Privacy & Security > Camera > "
+            '"Let desktop apps access your camera" and turn it ON.'
+        )
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    success = cv2.imwrite(str(path), frame)
+    success = cv2.imwrite(str(path), captured_frame)
     if not success:
         return "Failed to save captured image."
     return f"Captured photo to {path.resolve()}"

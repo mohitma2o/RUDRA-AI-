@@ -196,8 +196,7 @@ def _is_skill_error(result: str) -> bool:
         "Path is not a folder",
         "OpenCV",
         "mss ",
-        "pytesseract ",
-        "Tesseract OCR",
+        "EasyOCR ",
         "python-docx ",
         "pypdf ",
         "Pillow ",
@@ -218,15 +217,7 @@ def _summarize_extracted_text(text: str, source: str, llm_fn) -> str:
         return f"Failed to summarize {source}: {exc}"
 
 
-def execute_tool_call(prompt: str, llm_fn=None) -> str:
-    """Run a tool action represented by the user message and return the result."""
-    action = detect_tool_call(prompt)
-    if not action:
-        return ""
-
-    tool = action["tool"]
-    args = action.get("args", {})
-
+def _execute_tool_action(tool: str, args: Dict[str, Any], llm_fn=None, prompt: str = "") -> str:
     try:
         if tool == "open_application":
             app_name = args.get("name", "")
@@ -240,11 +231,11 @@ def execute_tool_call(prompt: str, llm_fn=None) -> str:
             ):
                 return result
             return f"Done — {result}"
-        if tool == "capture_photo":
+        if tool in {"capture_photo", "capture_and_search"}:
             capture_result = capture_photo()
             if not capture_result.startswith("Captured photo to "):
                 return capture_result
-            if not args.get("reverse_search"):
+            if tool != "capture_and_search" and not args.get("reverse_search"):
                 return f"Done — {capture_result}"
             photo_path = capture_result.removeprefix("Captured photo to ")
             if not Path(photo_path).is_file():
@@ -303,11 +294,73 @@ def execute_tool_call(prompt: str, llm_fn=None) -> str:
     return "Done — Unsupported tool call."
 
 
-def agent_response(prompt: str, llm_fn) -> str:
-    """Execute an agent-style action when the request is operational, otherwise ask the model."""
-    tool_result = execute_tool_call(prompt, llm_fn=llm_fn)
-    if tool_result:
-        return tool_result
+def execute_tool_call(prompt: str, llm_fn=None) -> str:
+    """Run a regex-detected action as the compatibility fallback."""
+    action = detect_tool_call(prompt)
+    if not action:
+        return ""
+    return _execute_tool_action(action["tool"], action.get("args", {}), llm_fn, prompt)
+
+
+def _response_field(value: Any, name: str, default=None):
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _plain_arguments(arguments: Any) -> Dict[str, Any]:
+    if isinstance(arguments, dict):
+        return arguments
+    if hasattr(arguments, "model_dump"):
+        return arguments.model_dump()
+    if hasattr(arguments, "dict"):
+        return arguments.dict()
+    return {}
+
+
+def agent_response(
+    prompt: str,
+    llm_fn,
+    tool_call_fn=None,
+    tool_followup_fn=None,
+    context: Optional[List[str]] = None,
+    language: Optional[str] = None,
+) -> str:
+    """Prefer native model tool calls, retaining regex dispatch as a fallback."""
+    model_message = None
+    model_content = ""
+    if tool_call_fn:
+        try:
+            response = tool_call_fn(prompt)
+            model_message = _response_field(response, "message")
+            calls = _response_field(model_message, "tool_calls", []) or []
+        except Exception as exc:
+            print(f"LLM tool calling unavailable; trying regex fallback: {exc}")
+        else:
+            model_content = str(_response_field(model_message, "content", "") or "").strip()
+            if calls:
+                tool_messages = []
+                for call in calls:
+                    function = _response_field(call, "function", {})
+                    tool_name = _response_field(function, "name", "")
+                    arguments = _plain_arguments(_response_field(function, "arguments", {}))
+                    result = _execute_tool_action(tool_name, arguments, llm_fn, prompt)
+                    tool_messages.append({"role": "tool", "content": result})
+                if tool_followup_fn:
+                    try:
+                        spoken_reply = tool_followup_fn(model_message, tool_messages)
+                    except Exception as exc:
+                        print(f"Tool action completed but final narration failed: {exc}")
+                    else:
+                        if spoken_reply:
+                            return spoken_reply
+                return "\n".join(message["content"] for message in tool_messages)
+
+    fallback_result = execute_tool_call(prompt, llm_fn=llm_fn)
+    if fallback_result:
+        return fallback_result
+    if model_content:
+        return model_content
 
     if llm_fn is None:
         return "I can help with system tasks, file search, browser actions, and general questions."

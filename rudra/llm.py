@@ -29,6 +29,28 @@ SYSTEM_PROMPT = (
     "not with a formal AI disclaimer."
 )
 
+TOOL_SCHEMAS = [
+    {"type": "function", "function": {"name": "open_application", "description": "Open or launch a desktop or Start Menu application by name. If the user says 'open camera', 'launch the camera', or 'pull up the Camera app', call this with name='Camera'. Opening Camera is not taking a photo.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Application name"}}, "required": ["name"]}}},
+    {"type": "function", "function": {"name": "capture_photo", "description": "Take a photo using the physical webcam only when the user explicitly asks to take or snap a picture/photo. Never use this for 'open camera' or to launch the Camera app.", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {"name": "capture_and_search", "description": "Take a photo with the physical webcam and search for the image online only when the user explicitly asks to take a photo and search for it. Never use this to launch the Camera application.", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {"name": "compose_email", "description": "Open a new email draft addressed to the specified recipient.", "parameters": {"type": "object", "properties": {"to": {"type": "string", "description": "Recipient email address"}, "subject": {"type": "string"}, "body": {"type": "string"}}, "required": ["to"]}}},
+    {"type": "function", "function": {"name": "open_folder", "description": "Open a folder on this computer, including common folders such as Desktop, Documents, and Downloads.", "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "Folder name or path"}}, "required": ["path"]}}},
+    {"type": "function", "function": {"name": "read_screen", "description": "Read visible text from the current screen and summarize it.", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {"name": "read_document", "description": "Find and read a local document by name, then summarize its contents.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Document name or path"}}, "required": ["name"]}}},
+    {"type": "function", "function": {"name": "search_file", "description": "Search common local folders for a file by name.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "File name or search phrase"}}, "required": ["name"]}}},
+    {"type": "function", "function": {"name": "google_search", "description": "Search the web for the requested topic or query.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "get_system_stats", "description": "Get this computer's CPU, memory, disk, and battery status.", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {"name": "close_application", "description": "Close a running desktop application by name.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Application name"}}, "required": ["name"]}}},
+]
+
+TOOL_ROUTING_INSTRUCTIONS = (
+    "\n\nTool routing rules: Interpret the requested action, not just the word camera. "
+    "'Open camera', 'open the camera app', 'launch camera', and 'pull up the Camera app' "
+    "mean call open_application with name='Camera'. Only requests to take, snap, or capture "
+    "a picture/photo mean call capture_photo. Do not take a picture when the user asks to "
+    "open the Camera application."
+)
+
 
 def _load_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
@@ -61,6 +83,49 @@ def _build_system_context(context: Optional[List[str]] = None, language: Optiona
         if scripture_context:
             system_content += "\n\nScripture context:\n" + scripture_context
     return system_content
+
+
+def query_ollama_with_tools(prompt: str, context: Optional[List[str]] = None, language: Optional[str] = None):
+    """Ask Ollama to answer or select one of Rudra's declared tools."""
+    import ollama
+
+    model = _CONFIG.get("ollama_model", "qwen2.5:3b-instruct-q4_K_M")
+    thread_count = int(_CONFIG.get("ollama_threads", 4))
+    os.environ.setdefault("OLLAMA_NUM_THREAD", str(thread_count))
+    return ollama.chat(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": _build_system_context(context, language) + TOOL_ROUTING_INSTRUCTIONS,
+            },
+            {"role": "user", "content": prompt},
+        ],
+        tools=TOOL_SCHEMAS,
+    )
+
+
+def complete_ollama_tool_call(
+    prompt: str,
+    assistant_message: Any,
+    tool_messages: list[dict[str, str]],
+    context: Optional[List[str]] = None,
+    language: Optional[str] = None,
+) -> str:
+    """Send executed tool results back to Ollama for a natural spoken reply."""
+    import ollama
+
+    model = _CONFIG.get("ollama_model", "qwen2.5:3b-instruct-q4_K_M")
+    messages = [
+        {"role": "system", "content": _build_system_context(context, language)},
+        {"role": "user", "content": prompt},
+        assistant_message,
+        *tool_messages,
+    ]
+    response = ollama.chat(model=model, messages=messages)
+    message = response.get("message") if isinstance(response, dict) else getattr(response, "message", None)
+    content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
+    return str(content or "").strip()
 
 
 def _query_ollama(prompt: str, context: Optional[List[str]] = None, language: Optional[str] = None) -> str:
