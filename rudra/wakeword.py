@@ -10,6 +10,24 @@ import numpy as np
 _stop_event = Event()
 
 
+def _select_wakeword_trigger(predictions: dict[str, float], threshold: float = 0.45):
+    """Return the strongest wake-word prediction that crossed the activation threshold."""
+    if not predictions:
+        return None
+
+    best_name = None
+    best_score = -1.0
+    for name, score in predictions.items():
+        try:
+            value = float(score)
+        except (TypeError, ValueError):
+            continue
+        if value >= threshold and value > best_score:
+            best_name = str(name)
+            best_score = value
+    return best_name
+
+
 def _ensure_openwakeword_resources() -> bool:
     """Download the shared ONNX resource bundle used by openWakeWord if missing."""
     try:
@@ -119,36 +137,19 @@ def _openwakeword_loop(callback: Callable[[str], None], model) -> None:
         frames_per_buffer=1280,
     )
     last_trigger = 0.0
-    consecutive_hits = 0
-    threshold = 0.6
+    threshold = 0.45
 
     try:
         while not _stop_event.is_set():
             frame = stream.read(1280, exception_on_overflow=False)
             audio = np.frombuffer(frame, dtype=np.int16)
             predictions = model.predict(audio)
+            trigger_name = _select_wakeword_trigger(predictions, threshold=threshold)
 
-            if not predictions:
-                consecutive_hits = 0
-                continue
-
-            triggered = False
-            for model_name, score in predictions.items():
-                current_score = float(score)
-                if current_score > threshold:
-                    consecutive_hits += 1
-                else:
-                    consecutive_hits = 0
-
-                if consecutive_hits >= 3 and time.monotonic() >= last_trigger + 1.5:
-                    callback(model_name)
-                    last_trigger = time.monotonic()
-                    consecutive_hits = 0
-                    triggered = True
-                    break
-
-            if not triggered and not any(float(score) > threshold for score in predictions.values()):
-                consecutive_hits = 0
+            if trigger_name and time.monotonic() >= last_trigger + 1.0:
+                callback("Rudra")
+                last_trigger = time.monotonic()
+                print(f"Wake word trigger fired via {trigger_name}.")
 
             time.sleep(0.01)
     finally:

@@ -18,8 +18,11 @@ SYSTEM_PROMPT = (
     "Speak with warmth and quiet confidence — never robotic, never overly formal. "
     "When the user asks for advice, draw on the wisdom in the provided scripture context "
     "(if relevant) and reference it naturally, the way a wise friend would, not like you're quoting a textbook. "
-    "Otherwise answer normally as a sharp, capable assistant. Reply in the same language the user spoke in "
-    "(Hindi, English, or Punjabi). "
+    "Otherwise answer normally as a sharp, capable assistant. For casual check-ins "
+    "('you there?', 'you alive?', 'you up?'), respond briefly and with personality — "
+    "e.g. 'Alive and kicking.' / 'Right here.' — not a formal acknowledgment. "
+    "Match the user's casualness; you don't need to be profound every time. Reply in "
+    "the same language the user spoke in (Hindi, English, or Punjabi). "
     "Never say phrases like 'as an AI', 'I'm an AI assistant', 'I don't have "
     "personal experiences or opinions', or any other disclaimer that breaks "
     "character. Never mention being built by any company or being a language "
@@ -31,11 +34,12 @@ SYSTEM_PROMPT = (
 
 TOOL_SCHEMAS = [
     {"type": "function", "function": {"name": "open_application", "description": "Open or launch a desktop or Start Menu application by name. If the user says 'open camera', 'launch the camera', or 'pull up the Camera app', call this with name='Camera'. Opening Camera is not taking a photo.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Application name"}}, "required": ["name"]}}},
-    {"type": "function", "function": {"name": "capture_photo", "description": "Take a photo using the physical webcam only when the user explicitly asks to take or snap a picture/photo. Never use this for 'open camera' or to launch the Camera app.", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {"name": "capture_photo", "description": "Take a photo using the physical webcam only when the user explicitly asks to take, snap, click a picture, click an image, or click a photo. Also accept 'click a picture' / 'click an image' / 'click a photo' as Indian-English phrases. Never use this for 'open camera' or to launch the Camera app.", "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {"name": "capture_and_search", "description": "Take a photo with the physical webcam and search for the image online only when the user explicitly asks to take a photo and search for it. Never use this to launch the Camera application.", "parameters": {"type": "object", "properties": {}, "required": []}}},
-    {"type": "function", "function": {"name": "compose_email", "description": "Open a new email draft addressed to the specified recipient.", "parameters": {"type": "object", "properties": {"to": {"type": "string", "description": "Recipient email address"}, "subject": {"type": "string"}, "body": {"type": "string"}}, "required": ["to"]}}},
+    {"type": "function", "function": {"name": "compose_email", "description": "Open a new email draft with the recipient, subject, and body extracted from the user's request.", "parameters": {"type": "object", "properties": {"to": {"type": "string", "description": "Recipient email address"}, "subject": {"type": "string", "description": "Email subject"}, "body": {"type": "string", "description": "Email body"}}, "required": ["to"]}}},
     {"type": "function", "function": {"name": "open_folder", "description": "Open a folder on this computer, including common folders such as Desktop, Documents, and Downloads.", "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "Folder name or path"}}, "required": ["path"]}}},
     {"type": "function", "function": {"name": "read_screen", "description": "Read visible text from the current screen and summarize it.", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {"name": "debug_screen", "description": "Read the user's screen, extract visible code or error text, and identify likely bugs or explain the error briefly and practically.", "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {"name": "read_document", "description": "Find and read a local document by name, then summarize its contents.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Document name or path"}}, "required": ["name"]}}},
     {"type": "function", "function": {"name": "search_file", "description": "Search common local folders for a file by name.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "File name or search phrase"}}, "required": ["name"]}}},
     {"type": "function", "function": {"name": "google_search", "description": "Search the web for the requested topic or query.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},

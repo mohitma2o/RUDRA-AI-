@@ -2,13 +2,27 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from rudra.agent import detect_tool_call
+from rudra.agent import _execute_tool_action, detect_tool_call
+from rudra.llm import SYSTEM_PROMPT, TOOL_SCHEMAS
 from rudra.skills.files import MAX_DOCUMENT_TEXT_CHARS, read_document
 from rudra.skills.system import APP_COMMAND_MAP, _match_app_in_list
 from rudra.wakeword import _select_wakeword_trigger
 
 
 class AgentToolDispatchTests(unittest.TestCase):
+    def test_casual_check_in_prompt_is_short_and_human(self):
+        self.assertIn("you alive?", SYSTEM_PROMPT.lower())
+        self.assertIn("Alive and kicking", SYSTEM_PROMPT)
+        self.assertIn("Right here", SYSTEM_PROMPT)
+
+    def test_capture_photo_tool_description_accepts_click_phrases(self):
+        capture_schema = next(
+            schema["function"] for schema in TOOL_SCHEMAS if schema["function"]["name"] == "capture_photo"
+        )
+        self.assertIn("click a picture", capture_schema["description"].lower())
+        self.assertIn("click an image", capture_schema["description"].lower())
+        self.assertIn("click a photo", capture_schema["description"].lower())
+
     def test_detect_open_application(self):
         action = detect_tool_call("open notepad on my computer")
         self.assertIsNotNone(action)
@@ -94,6 +108,17 @@ class AgentToolDispatchTests(unittest.TestCase):
             result = self._run_execute_tool_call("email test@example.com")
         compose.assert_called_once_with("test@example.com", subject="", body="")
         self.assertIn("mailto:test@example.com", result)
+
+    def test_compose_email_forwards_subject_and_body(self):
+        from unittest.mock import patch
+
+        with patch("rudra.agent.compose_email", return_value="Opened URL: mailto:john@example.com") as compose:
+            result = _execute_tool_action(
+                "compose_email",
+                {"to": "john@example.com", "subject": "Late", "body": "I'll be 10 minutes late."},
+            )
+        compose.assert_called_once_with("john@example.com", subject="Late", body="I'll be 10 minutes late.")
+        self.assertIn("mailto:john@example.com", result)
 
     def test_folder_command_opens_resolved_shortcut(self):
         from unittest.mock import patch

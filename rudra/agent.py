@@ -74,6 +74,9 @@ def detect_tool_call(prompt: str) -> Optional[Dict[str, Any]]:
     if re.search(r"\b(?:what(?:'s| is) on my screen|read my screen|read this page)\b", text):
         return {"tool": "read_screen", "args": {}}
 
+    if re.search(r"\b(?:help me debug this|what's wrong with this code|read this error)\b", text):
+        return {"tool": "debug_screen", "args": {}}
+
     document_match = re.search(r"\bwhat does\s+(.+?)\s+say\b", prompt, flags=re.IGNORECASE)
     if not document_match:
         document_match = re.search(r"\b(?:summarize|read me)\s+(.+)", prompt, flags=re.IGNORECASE)
@@ -245,15 +248,31 @@ def _execute_tool_action(tool: str, args: Dict[str, Any], llm_fn=None, prompt: s
                 return f"{capture_result}; {search_result}"
             return f"Done — {capture_result}; {search_result}"
         if tool == "compose_email":
-            result = compose_email(args.get("to", ""), subject="", body="")
+            result = compose_email(
+                args.get("to", ""),
+                subject=args.get("subject", ""),
+                body=args.get("body", ""),
+            )
             return result if _is_skill_error(result) else f"Done — {result}"
         if tool == "open_folder":
             result = open_folder(args.get("path", ""))
             return result if _is_skill_error(result) else f"Done — {result}"
-        if tool == "read_screen":
+        if tool in {"read_screen", "debug_screen"}:
             text = read_screen()
             if _is_skill_error(text):
                 return text
+            if tool == "debug_screen":
+                if not llm_fn:
+                    return "I couldn't debug the screen because the language model is unavailable."
+                prompt_text = (
+                    "The following is code/error text read from the user's screen. "
+                    "Identify likely bugs or explain the error, briefly and practically: "
+                    f"{text[:3000]}"
+                )
+                try:
+                    return f"Done — {llm_fn(prompt_text)}"
+                except Exception as exc:
+                    return f"Failed to debug screen: {exc}"
             return _summarize_extracted_text(text, "screen", llm_fn)
         if tool == "read_document":
             target = args.get("name", "")

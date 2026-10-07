@@ -19,5 +19,6 @@ opencv-python
 playwright
 mss
 easyocr
+pywebview
 python-docx
 pypdf

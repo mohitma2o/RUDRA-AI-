@@ -22,8 +22,9 @@ def read_screen() -> str:
 
     try:
         with mss.mss() as capture:
-            monitor = capture.monitors[1] if len(capture.monitors) > 1 else capture.monitors[0]
-            screenshot = capture.grab(monitor)
+            # mss monitor index 0 represents the full virtual desktop on Windows.
+            # Capturing it avoids missing content on secondary displays.
+            screenshot = capture.grab(capture.monitors[0])
             image = np.frombuffer(screenshot.rgb, dtype=np.uint8).reshape(
                 screenshot.height, screenshot.width, 3
             )

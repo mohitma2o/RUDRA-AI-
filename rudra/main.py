@@ -16,6 +16,7 @@ import pystray
 from PIL import Image, ImageDraw
 
 from agent import agent_response
+from hud import RudraHud
 from llm import complete_ollama_tool_call, get_llm_backend, query_llm, query_ollama_with_tools
 from memory.scriptures import query as query_scripture
 from stt import prepare_stt_calibration, transcribe_audio
@@ -31,9 +32,9 @@ def detect_language(text: str) -> str:
     """Infer the language of the transcription for the TTS voice selection."""
     if not text:
         return "en"
-    if any(ch in text for ch in "ऀ-ॿ\u0900-\u097F"):
+    if any("\u0900" <= ch <= "\u097F" for ch in text):
         return "hi"
-    if any(ch in text for ch in "ਕ-ੴ\u0A00-\u0A7F"):
+    if any("\u0A00" <= ch <= "\u0A7F" for ch in text):
         return "pa"
     return "en"
 
@@ -74,6 +75,7 @@ class RudraTray:
             self._build_menu(),
         )
         self._listener_thread: threading.Thread | None = None
+        self.hud = RudraHud()
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
@@ -115,13 +117,17 @@ class RudraTray:
         try:
             print(f"Wake word callback fired: {phrase}")
             self._notify("Rudra wake word detected. Listening now.")
+            self.hud.set_state("listening")
+            self.hud.set_transcript("", "")
             stop_speaking()
 
             try:
                 print("Stage 1: transcribing user speech...")
+                self.hud.set_state("listening")
                 speech_result = transcribe_audio()
                 user_text = speech_result.get("text", "") if isinstance(speech_result, dict) else str(speech_result)
                 language = speech_result.get("language") if isinstance(speech_result, dict) else None
+                self.hud.set_transcript(user_text, "")
                 print(f"Stage 1 result: {user_text!r} (language={language})")
             except Exception as exc:
                 print(f"Speech transcription failed: {exc}")
@@ -147,6 +153,7 @@ class RudraTray:
                         self._notify("Scripture context found for your query.")
             except Exception as exc:
                 print(f"Scripture retrieval failed: {exc}")
+                self.hud.set_state("thinking")
                 traceback.print_exc()
 
             try:
@@ -177,6 +184,8 @@ class RudraTray:
                 return
 
             try:
+                self.hud.set_transcript(user_text, response)
+                self.hud.set_state("speaking")
                 print("Stage 3: speaking response...")
                 print(f"Detected response language: {language}")
                 speak_text(response, language=language)
@@ -186,12 +195,14 @@ class RudraTray:
                 self._notify(f"Speech output failed: {exc}")
             else:
                 print("Stage 3 complete: audio playback returned without exception.")
+                self.hud.set_state("idle")
                 self._notify("Rudra has responded.")
         finally:
             self._processing = False
 
     def start(self) -> None:
         prepare_stt_calibration()
+        self.hud.start()
         start_wakeword_listener(self._on_wake, str(MODEL_PATH))
         self._notify("Rudra is running in the tray. Say 'Rudra' to wake it.")
         self.icon.run()
