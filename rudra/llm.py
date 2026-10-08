@@ -89,6 +89,28 @@ def _build_system_context(context: Optional[List[str]] = None, language: Optiona
     return system_content
 
 
+def warm_up_ollama() -> None:
+    """Pre-load the Ollama model at startup so the first real question isn't slow.
+
+    Sends a single-token ping with keep_alive so the model stays resident in RAM
+    for the duration of the session rather than unloading between questions.
+    """
+    try:
+        import ollama
+
+        model = _CONFIG.get("ollama_model", "qwen2.5:3b-instruct-q4_K_M")
+        print(f"[LLM] Warming up Ollama model '{model}'...")
+        ollama.chat(
+            model=model,
+            messages=[{"role": "user", "content": "hi"}],
+            options={"num_predict": 1, "num_ctx": 512},
+            keep_alive="30m",
+        )
+        print("[LLM] Warm-up complete.")
+    except Exception as exc:
+        print(f"[LLM] Warm-up failed (non-fatal): {exc}")
+
+
 def query_ollama_with_tools(prompt: str, context: Optional[List[str]] = None, language: Optional[str] = None):
     """Ask Ollama to answer or select one of Rudra's declared tools."""
     import ollama
@@ -106,6 +128,7 @@ def query_ollama_with_tools(prompt: str, context: Optional[List[str]] = None, la
             {"role": "user", "content": prompt},
         ],
         tools=TOOL_SCHEMAS,
+        keep_alive="30m",
     )
 
 
@@ -143,11 +166,24 @@ def _query_ollama(prompt: str, context: Optional[List[str]] = None, language: Op
         {"role": "user", "content": prompt},
     ]
 
+    # Options: keep model loaded between calls (avoids cold-start delay) and
+    # cap answer length so voice responses are concise and fast to generate.
+    chat_options = {
+        "num_predict": int(_CONFIG.get("ollama_num_predict", 120)),
+        "num_ctx": int(_CONFIG.get("ollama_num_ctx", 2048)),
+        "temperature": float(_CONFIG.get("ollama_temperature", 0.5)),
+    }
+
     try:
         import ollama
 
         if hasattr(ollama, "chat"):
-            response = ollama.chat(model=model, messages=messages)
+            response = ollama.chat(
+                model=model,
+                messages=messages,
+                options=chat_options,
+                keep_alive="30m",
+            )
             if isinstance(response, dict):
                 message = response.get("message") or {}
                 if isinstance(message, dict):

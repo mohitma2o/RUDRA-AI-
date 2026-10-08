@@ -79,20 +79,39 @@ def _speech_recognition_loop(callback: Callable[[str], None]) -> None:
             "Install with `pip install SpeechRecognition`."
         )
 
+    # Try to reuse the threshold calibrated by stt.py so the threshold stays
+    # stable and doesn't drift upward between calls (the 'listens once' bug).
+    try:
+        from stt import _CALIBRATED_ENERGY_THRESHOLD as _cal_thresh  # noqa: PLC0415
+    except ImportError:
+        _cal_thresh = None
+
     recognizer = sr.Recognizer()
-    recognizer.dynamic_energy_threshold = True
+    # dynamic_energy_threshold = True causes the threshold to creep up on every
+    # loop iteration until no audio is loud enough to trigger recognition.
+    recognizer.dynamic_energy_threshold = False
     recognizer.pause_threshold = 1.5
-    recognizer.energy_threshold = 300
+    recognizer.energy_threshold = _cal_thresh or 300
 
     try:
         with sr.Microphone() as source:
-            recognizer.adjust_for_ambient_noise(source, duration=1.0)
-            print("Wake word fallback: microphone initialized.")
+            if _cal_thresh is None:
+                recognizer.adjust_for_ambient_noise(source, duration=1.0)
+                recognizer.energy_threshold = max(int(recognizer.energy_threshold), 300)
+            print(f"Wake word fallback: mic ready (threshold={recognizer.energy_threshold}).")
             while not _stop_event.is_set():
                 try:
                     audio = recognizer.listen(source, timeout=5.0, phrase_time_limit=5.0)
-                    text = recognizer.recognize_google(audio).lower()
-                    if "rudra" in text or "hey rudra" in text:
+                    # en-IN handles Indian-accented English well; "Rudra" is often
+                    # misheard as "rudhra", "rudar", etc. \u2014 check both languages.
+                    text = ""
+                    for lang in ("en-IN", "hi-IN"):
+                        try:
+                            text = recognizer.recognize_google(audio, language=lang).lower()
+                            break
+                        except sr.UnknownValueError:
+                            continue
+                    if any(w in text for w in ("rudra", "rudhra", "rudar", "rudraa")):
                         callback("Rudra")
                 except sr.WaitTimeoutError:
                     continue

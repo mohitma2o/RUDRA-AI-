@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 
 from agent import agent_response
 from hud import RudraHud
-from llm import complete_ollama_tool_call, get_llm_backend, query_llm, query_ollama_with_tools
+from llm import complete_ollama_tool_call, get_llm_backend, query_llm, query_ollama_with_tools, warm_up_ollama
 from memory.scriptures import query as query_scripture
 from stt import prepare_stt_calibration, transcribe_audio
 from tts import speak_text, stop_speaking
@@ -204,6 +204,10 @@ class RudraTray:
         prepare_stt_calibration()
         self.hud.start()
         start_wakeword_listener(self._on_wake, str(MODEL_PATH))
+        # Pre-load the LLM in the background so the first spoken question
+        # isn't slow due to cold-start model loading.
+        if get_llm_backend() == "ollama":
+            threading.Thread(target=warm_up_ollama, daemon=True).start()
         self._notify("Rudra is running in the tray. Say 'Rudra' to wake it.")
         self.icon.run()
 

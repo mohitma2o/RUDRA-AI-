@@ -26,16 +26,19 @@ def prepare_stt_calibration() -> Optional[int]:
         return _CALIBRATED_ENERGY_THRESHOLD
 
     recognizer = sr.Recognizer()
-    recognizer.dynamic_energy_threshold = True
+    # Disable dynamic adjustment so the calibrated value stays stable across calls
+    recognizer.dynamic_energy_threshold = False
     recognizer.pause_threshold = 1.5
     recognizer.energy_threshold = 300
 
     try:
         with sr.Microphone() as source:
-            recognizer.adjust_for_ambient_noise(source, duration=0.5)
-            _CALIBRATED_ENERGY_THRESHOLD = int(recognizer.energy_threshold)
+            recognizer.adjust_for_ambient_noise(source, duration=1.0)
+            _CALIBRATED_ENERGY_THRESHOLD = max(int(recognizer.energy_threshold), 300)
+            print(f"[STT] Calibrated energy threshold: {_CALIBRATED_ENERGY_THRESHOLD}")
             return _CALIBRATED_ENERGY_THRESHOLD
-    except Exception:
+    except Exception as exc:
+        print(f"[STT] Calibration failed: {exc}")
         return None
 
 
@@ -54,8 +57,16 @@ def load_stt_model(model_name: str = "base") -> object:
     return _model
 
 
-def transcribe_audio(duration: float = 5.0, silence_timeout: float = 1.5) -> Dict[str, Any]:
-    """Record audio and return both the transcript text and Whisper's detected language."""
+def transcribe_audio(duration: float = 10.0, silence_timeout: float = 2.0) -> Dict[str, Any]:
+    """Record audio and return both the transcript text and Whisper's detected language.
+
+    Key design choices:
+    - dynamic_energy_threshold is DISABLED: the calibrated threshold from startup is
+      reused so it cannot drift upward and silently stop hearing speech after the
+      first successful recognition.
+    - phrase_time_limit = duration (10 s default) gives room for longer commands.
+    - silence_timeout = 2.0 s lets the speaker finish a sentence naturally.
+    """
     try:
         import speech_recognition as sr
     except ImportError as exc:
@@ -64,7 +75,9 @@ def transcribe_audio(duration: float = 5.0, silence_timeout: float = 1.5) -> Dic
         ) from exc
 
     recognizer = sr.Recognizer()
-    recognizer.dynamic_energy_threshold = True
+    # Must be False — True causes the threshold to creep up on every call until
+    # no audio is loud enough to trigger recognition (the 'listens only once' bug).
+    recognizer.dynamic_energy_threshold = False
     recognizer.pause_threshold = silence_timeout
     recognizer.energy_threshold = _CALIBRATED_ENERGY_THRESHOLD or 300
 

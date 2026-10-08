@@ -10,6 +10,8 @@ from typing import Dict, List, Optional, Set
 
 import psutil
 
+# URI-scheme entries (ends with ":") are opened via os.startfile() to reach
+# Store / system apps that are not plain executables on PATH.
 APP_COMMAND_MAP = {
     "notepad": "notepad.exe",
     "calculator": "calc",
@@ -23,6 +25,17 @@ APP_COMMAND_MAP = {
     "powershell": "powershell.exe",
     "paint": "mspaint.exe",
     "task manager": "taskmgr.exe",
+    # Windows Camera is a Store app — open via URI, not as a filename
+    "camera": "microsoft.windows.camera:",
+    "camera app": "microsoft.windows.camera:",
+    "windows camera": "microsoft.windows.camera:",
+    # Other common Store / URI apps
+    "settings": "ms-settings:",
+    "windows settings": "ms-settings:",
+    "store": "ms-windows-store:",
+    "microsoft store": "ms-windows-store:",
+    "spotify": "spotify:",
+    "whatsapp": "whatsapp:",
 }
 
 _INSTALLED_APPS_CACHE: Optional[List[Dict[str, str]]] = None
@@ -226,6 +239,14 @@ def open_application(name: str, timeout: float = 3.0) -> str:
             elif resolved_app and appid.startswith("{"):
                 spawned_proc = subprocess.Popen(["explorer.exe", f"shell:appsFolder\\{appid}"])
             elif fast_command:
+                # URI-scheme entries (e.g. "microsoft.windows.camera:") must use
+                # os.startfile — subprocess cannot handle protocol handlers.
+                if fast_command.endswith(":"):
+                    try:
+                        os.startfile(fast_command)
+                        return f"Opening {display_name} now."
+                    except Exception as uri_exc:
+                        return f"Failed to open '{name}': {uri_exc}"
                 exe_path = _resolve_registered_exe_path(fast_command)
                 if exe_path:
                     try:
