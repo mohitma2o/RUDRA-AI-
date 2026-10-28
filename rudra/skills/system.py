@@ -34,7 +34,6 @@ APP_COMMAND_MAP = {
     "windows settings": "ms-settings:",
     "store": "ms-windows-store:",
     "microsoft store": "ms-windows-store:",
-    "spotify": "spotify:",
     "whatsapp": "whatsapp:",
 }
 

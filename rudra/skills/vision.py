@@ -1,16 +1,24 @@
 """Vision skill helpers for webcam capture and reverse image search."""
 
+from datetime import datetime
 from pathlib import Path
 
+_PHOTO_DIR = Path.home() / "Pictures" / "Rudra"
 
-def capture_photo(filename: str = "capture.jpg") -> str:
-    """Capture a photo from the webcam and save it to the given filename."""
+
+def capture_photo(filename: str | None = None) -> str:
+    """Capture a photo from the webcam and save it to ~/Pictures/Rudra/."""
     try:
         import cv2
-    except ImportError as exc:
+    except ImportError:
         return "OpenCV is not installed. Install with `pip install opencv-python`."
 
-    path = Path(filename)
+    _PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+    if filename:
+        path = _PHOTO_DIR / filename
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = _PHOTO_DIR / f"rudra_{timestamp}.jpg"
     errors = []
     opencv_errors = []
     captured_frame = None
@@ -53,7 +61,6 @@ def capture_photo(filename: str = "capture.jpg") -> str:
             '"Let desktop apps access your camera" and turn it ON.'
         )
 
-    path.parent.mkdir(parents=True, exist_ok=True)
     success = cv2.imwrite(str(path), captured_frame)
     if not success:
         return "Failed to save captured image."

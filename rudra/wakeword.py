@@ -71,58 +71,87 @@ def load_wakeword_model(model_path: str):
 
 
 def _speech_recognition_loop(callback: Callable[[str], None]) -> None:
+    """Wake-word fallback using local faster-whisper (no internet required)."""
     try:
-        import speech_recognition as sr
+        import pyaudio
     except ImportError:
         raise RuntimeError(
-            "SpeechRecognition is required for fallback wake word detection. "
-            "Install with `pip install SpeechRecognition`."
+            "PyAudio is required for fallback wake word detection. "
+            "Install with `pip install pyaudio`."
         )
+    import io
+    import wave
+    import numpy as np
 
-    # Try to reuse the threshold calibrated by stt.py so the threshold stays
-    # stable and doesn't drift upward between calls (the 'listens once' bug).
+    # Re-use the calibrated energy threshold from stt.py if available.
     try:
         from stt import _CALIBRATED_ENERGY_THRESHOLD as _cal_thresh  # noqa: PLC0415
     except ImportError:
         _cal_thresh = None
 
-    recognizer = sr.Recognizer()
-    # dynamic_energy_threshold = True causes the threshold to creep up on every
-    # loop iteration until no audio is loud enough to trigger recognition.
-    recognizer.dynamic_energy_threshold = False
-    recognizer.pause_threshold = 1.5
-    recognizer.energy_threshold = _cal_thresh or 300
-
     try:
-        with sr.Microphone() as source:
-            if _cal_thresh is None:
-                recognizer.adjust_for_ambient_noise(source, duration=1.0)
-                recognizer.energy_threshold = max(int(recognizer.energy_threshold), 300)
-            print(f"Wake word fallback: mic ready (threshold={recognizer.energy_threshold}).")
+        from faster_whisper import WhisperModel
+        _wake_model = WhisperModel("base", device="cpu", compute_type="int8", cpu_threads=2)
+    except Exception as exc:
+        raise RuntimeError(f"faster-whisper unavailable for wake fallback: {exc}") from exc
+
+    RATE = 16000
+    CHUNK = 1280
+    SILENCE_CHUNKS = 20  # ~1.6 s of silence ends a phrase
+    ENERGY_THRESHOLD = _cal_thresh or 300
+
+    pa = pyaudio.PyAudio()
+    stream = pa.open(format=pyaudio.paInt16, channels=1, rate=RATE,
+                     input=True, frames_per_buffer=CHUNK)
+
+    print(f"Wake word fallback (local Whisper): mic ready (threshold={ENERGY_THRESHOLD}).")
+    try:
+        while not _stop_event.is_set():
+            frames = []
+            silent_chunks = 0
+            recording = False
             while not _stop_event.is_set():
-                try:
-                    audio = recognizer.listen(source, timeout=5.0, phrase_time_limit=5.0)
-                    # en-IN handles Indian-accented English well; "Rudra" is often
-                    # misheard as "rudhra", "rudar", etc. \u2014 check both languages.
-                    text = ""
-                    for lang in ("en-IN", "hi-IN"):
-                        try:
-                            text = recognizer.recognize_google(audio, language=lang).lower()
-                            break
-                        except sr.UnknownValueError:
-                            continue
-                    if any(w in text for w in ("rudra", "rudhra", "rudar", "rudraa")):
-                        callback("Rudra")
-                except sr.WaitTimeoutError:
-                    continue
-                except sr.UnknownValueError:
-                    continue
-                except sr.RequestError as exc:
-                    print("Wake word recognition network error:", exc)
-    except OSError as exc:
-        raise RuntimeError(
-            "Microphone access failed. Check your audio device and try again."
-        ) from exc
+                raw = stream.read(CHUNK, exception_on_overflow=False)
+                audio_chunk = np.frombuffer(raw, dtype=np.int16)
+                energy = np.abs(audio_chunk).mean()
+                if energy > ENERGY_THRESHOLD:
+                    recording = True
+                    silent_chunks = 0
+                    frames.append(raw)
+                elif recording:
+                    frames.append(raw)
+                    silent_chunks += 1
+                    if silent_chunks >= SILENCE_CHUNKS:
+                        break
+
+            if not frames or _stop_event.is_set():
+                continue
+
+            # Build a WAV buffer and transcribe locally
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(RATE)
+                wf.writeframes(b"".join(frames))
+            buf.seek(0)
+
+            try:
+                pcm = np.frombuffer(buf.read(), dtype=np.int16)[44:].astype(np.float32) / 32768.0
+                segs, _ = _wake_model.transcribe(
+                    pcm, beam_size=1, language="en", vad_filter=False,
+                    condition_on_previous_text=False,
+                    initial_prompt="Rudra.",
+                )
+                text = " ".join(s.text.lower().strip() for s in segs)
+                if any(w in text for w in ("rudra", "rudhra", "rudar", "rudraa", "roodra")):
+                    callback("Rudra")
+            except Exception as exc:
+                print(f"Wake word fallback transcription error: {exc}")
+    finally:
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
 
 
 def start_wakeword_listener(callback: Callable[[str], None], model_path: str = "models/rudra.onnx") -> None:

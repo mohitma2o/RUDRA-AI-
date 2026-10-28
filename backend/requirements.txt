@@ -1,0 +1,37 @@
+﻿# Backend requirements — pinned for reproducibility
+fastapi==0.115.12
+uvicorn[standard]==0.34.3
+websockets==14.2
+python-multipart==0.0.20
+httpx==0.28.1
+
+# STT
+faster-whisper==1.2.1
+
+# TTS
+edge-tts==7.2.8
+pyttsx3==2.98
+
+# LLM
+ollama==0.5.1
+
+# Wake word fuzzy matching
+rapidfuzz==3.13.0
+
+# Hardware / system
+psutil==7.0.0
+pycaw==20240210
+screen-brightness-control==0.23.0
+pyautogui==0.9.54
+pyperclip==1.9.0
+mss==10.0.0
+opencv-python==4.11.0.86
+playwright==1.51.0
+
+# Shared with rudra/ — must be compatible
+python-dotenv==1.1.0
+chromadb==0.6.3
+sentence-transformers==3.4.1
+pypdf==5.4.0
+python-docx==1.1.2
+easyocr==1.7.2
