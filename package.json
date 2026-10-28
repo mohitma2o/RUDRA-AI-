@@ -1,0 +1,22 @@
+{
+  "name": "rudra-ai",
+  "version": "1.0.0",
+  "description": "Rudra AI - App-like Voice Assistant for Windows",
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:electron\"",
+    "dev:backend": "python -m uvicorn app.main:app --app-dir backend --port 8000 --reload",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "build:frontend": "npm --prefix frontend run build",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "build": "npm run build:frontend && npm run build:electron",
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "electron": "^33.2.0",
+    "typescript": "^5.7.0",
+    "wait-on": "^8.0.1"
+  }
+}
