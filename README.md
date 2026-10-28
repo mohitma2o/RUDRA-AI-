@@ -1,126 +1,86 @@
-﻿# RUDRA AI — Local Voice Assistant for Windows
+# RUDRA AI — App-like Voice Assistant for Windows
 
-Rudra is a Jarvis-style voice assistant that runs silently in the Windows system tray.
-Say **"Rudra"** to wake it, ask a question or give a command, and it speaks back in
-Hindi, English, or Punjabi. Everything runs locally — no cloud required (except TTS,
-which uses Microsoft Neural voices via edge-tts).
+Rudra is a modern, voice-activated desktop assistant for Windows. Powered by **Electron**, **React 18 (Vite, Tailwind v4, Zustand)**, and a local **FastAPI** backend with streaming **Ollama (Qwen 2.5)** and **faster-whisper**.
 
----
-
-## Features
-
-- **Custom wake word** — trained `rudra.onnx` model, always listening in the background
-- **Speech-to-text** — faster-whisper (`base` model, runs locally)
-- **LLM responses** — Ollama local inference; model selected by hardware (see below)
-- **Text-to-speech** — edge-tts with Hindi (`hi-IN-MadhurNeural`) default
-- **Desktop automation** — open/close apps, folders, search files, take photos, web search
-- **Screen and document reading** — OCR-based screen summaries and text extraction from TXT, Markdown, DOCX, and PDF files
-- **Scripture-grounded RAG** — ChromaDB + sentence-transformers pipeline is fully wired;
-  corpus ingestion is deferred by design (data/ is currently empty, returns gracefully)
-- **System tray UI** — pystray icon with Pause / Status / Quit menu
-- **Packagable** — PyInstaller `build.spec` produces a standalone `dist/Rudra/Rudra.exe`
+Say **"Rudra"** (or press `Ctrl+Shift+Space`) to wake it. It streams voice responses with an interactive glowing 3D Orb HUD, real-time waveform reactions, instant barge-in support, and desktop tool automation.
 
 ---
 
-## Requirements
-
-- Windows 10/11
-- Python 3.10+
-- [Ollama](https://ollama.com) installed and running
-
----
-
-## Setup
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/mohitma2o/RUDRA-AI-.git
-cd RUDRA-AI-
-
-# 2. Install Python dependencies
-cd rudra
-pip install -r requirements.txt
-
-# 3. Pull the Ollama model
-#    For 12 GB RAM machines:
-ollama pull qwen2.5:3b-instruct-q4_K_M
-#    For lower-RAM machines, edit config.json and use:
-#    ollama pull tinyllama
-
-# 4. (Optional) Copy .env.example to .env and add API keys
-#    if you want to use OpenAI or Anthropic instead of Ollama
-cp .env.example .env
-
-# 5. Run from source
-python main.py
-```
-
-### Screen OCR setup
-
-Screen reading uses EasyOCR, installed with `pip install -r requirements.txt`.
-EasyOCR downloads its recognition model automatically the first time screen
-reading is used; no separate OCR binary or PATH configuration is required.
-
-A tray icon appears. Right-click → **Quit** to exit.
-
----
-
-## Hardware Profiles
-
-Edit `rudra/config.json` to match your machine:
-
-| Machine | RAM | `ollama_model` | `ollama_threads` |
-|---------|-----|----------------|-----------------|
-| i3 10th Gen (primary) | 12 GB | `qwen2.5:3b-instruct-q4_K_M` | 4 |
-| Low-RAM secondary | < 8 GB | `tinyllama:latest` | 2 |
-
----
-
-## Project Structure
+## Architecture & Work Packages (WP0 - WP9)
 
 ```
 RUDRA-AI-/
-├── CLAUDE.md               # AI assistant context file (persistent)
-├── README.md
-├── rudra/
-│   ├── main.py             # Entry point — tray + wake loop
-│   ├── agent.py            # Intent detection + tool dispatch
-│   ├── llm.py              # Ollama / OpenAI / Anthropic routing
-│   ├── stt.py              # faster-whisper STT
-│   ├── tts.py              # edge-tts TTS
-│   ├── wakeword.py         # openWakeWord listener
-│   ├── config.json         # Runtime configuration
-│   ├── build.spec          # PyInstaller spec
-│   ├── models/
-│   │   └── rudra.onnx      # Trained wake-word model (do not delete)
-│   ├── memory/
-│   │   └── scriptures.py   # ChromaDB RAG layer
-│   └── skills/
-│       ├── browser.py
-│       ├── files.py
-│       ├── screen.py
-│       ├── system.py
-│       └── vision.py
-└── tests/
+├── electron/               # Electron shell (main process, tray, hotkey, transparent HUD window)
+│   ├── main.ts
+│   └── preload.ts
+├── frontend/               # React HUD UI (Vite, Tailwind CSS v4, Zustand voice store)
+│   ├── src/
+│   │   ├── components/     # Orb, Transcript, Metrics, SettingsModal, HUD
+│   │   ├── hooks/          # useVoicePipeline (Web Audio VAD, barge-in, WebSocket)
+│   │   └── store/          # Zustand voice store
+├── backend/                # FastAPI streaming voice backend
+│   └── app/
+│       ├── main.py         # /ws/voice WebSocket pipeline & /health endpoint
+│       ├── voice/          # faster-whisper STT, rapidfuzz wake, streaming LLM & TTS
+│       └── tools/          # Registry, Tier.AUTO & Tier.CONFIRM, hardware & browser tools
+├── rudra/                  # Legacy system-tray voice loop & model weights
+│   ├── models/rudra.onnx   # Trained wake word ONNX model (do not delete)
+│   └── skills/             # System automation, vision, file search, OCR
+└── tests/                  # Automated pytest suite (66 unit & pipeline tests)
 ```
 
 ---
 
-## Building a Standalone .exe
+## Key Features
+
+- **Pulsing 3D Orb HUD** — Transparent, always-on-top glassmorphic overlay with dynamic reactive glows for idle, listening, thinking, speaking, and confirmation states.
+- **Microphone Echo Cancellation & VAD** — Audio captured directly in the Electron window via Web Audio API with native browser echo cancellation and RMS voice activity detection (450ms tail silence).
+- **Streaming LLM to Speech (< 3s to first word)** — Ollama tokens stream immediately into a sentence splitter; edge-tts synthesises sentence 1 while sentence 2 is being generated.
+- **Barge-in Interruption** — Speaking over the assistant or clicking the Orb immediately terminates active TTS playback.
+- **Safety Tiers & Confirmations** — Destructive actions (shutdown, restart, sleep) require explicit voice or UI button approval (`Tier.CONFIRM`).
+- **Fast-path Hardware Tools** — Volume, mute, screen brightness, lock screen, and screenshots execute in < 150ms without hitting the LLM.
+- **Browser & YouTube Automation** — Playwright persistent browser context automates YouTube search & playback.
+- **Multilingual Support** — Native recognition and TTS in Indian English (`en-IN-PrabhatNeural`), Hindi (`hi-IN-MadhurNeural`), and Punjabi (`pa-IN-GaganNeural`).
+- **Global Hotkey & Tray** — `Ctrl+Shift+Space` toggles the HUD from anywhere on Windows.
+
+---
+
+## Quick Start
+
+### 1. Prerequisites
+- Windows 10/11
+- Python 3.10+
+- Node.js 20+
+- [Ollama](https://ollama.com) running locally (`ollama pull qwen2.5:1.5b` or `qwen2.5:3b-instruct-q4_K_M`)
+
+### 2. Install Dependencies
+```bash
+# Backend dependencies
+pip install -r backend/requirements.txt
+
+# Root and Frontend dependencies
+npm install
+npm --prefix frontend install
+```
+
+### 3. Run Development Mode
+```bash
+# Starts FastAPI backend (port 8000), Vite dev server (port 5173), and Electron shell
+npm run dev
+```
+
+### 4. Build for Production
+```bash
+npm run build
+npm start
+```
+
+---
+
+## Running Automated Tests
 
 ```bash
-cd rudra
-pyinstaller build.spec
-# Output: rudra/dist/Rudra/Rudra.exe
+python -m pytest tests/
 ```
+All 66 tests verify wake word variants (Hindi/Punjabi/fuzzy typos), streaming sentence boundaries, tool confirmation security tiers, and fast-path intent resolution.
 
----
-
-## Current Status
-
-Core pipeline is **feature-complete**: wake word → STT → LLM → TTS → agent tools all
-work end-to-end. Scripture RAG is wired but unpopulated (intentional). `.exe` packaging
-via PyInstaller is present and tested.
-
-The wake-word model (`models/rudra.onnx`) is a custom-trained ONNX file — do not
-delete or retrain; the training data is not in this repository.
