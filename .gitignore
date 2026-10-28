@@ -22,3 +22,24 @@ rudra/rudra_chroma/
 
 # OS files
 Thumbs.db
+
+# Node / Electron / Vite
+node_modules/
+dist/
+release/
+frontend/dist/
+electron/dist/
+
+# Databases / logs
+*.db
+*.sqlite3
+*.sqlite
+*.log
+logs/
+
+# Playwright persistent browser profile
+.rudra/
+
+# Model download caches (auto-downloaded at runtime, do not commit)
+# rudra/models/ is intentionally NOT ignored (rudra.onnx must be tracked)
+# Whisper model weights download to HF cache, not tracked
