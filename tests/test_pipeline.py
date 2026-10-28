@@ -90,3 +90,24 @@ class TestToolTiers:
             assert any(a["status"] == "cancelled" for a in activity)
 
         asyncio.run(_run())
+
+
+class TestFastPath:
+    def test_fast_path_intents(self):
+        from backend.app.main import match_fast_path
+
+        assert match_fast_path("what time is it") == ("get_time", {})
+        assert match_fast_path("tell me the time") == ("get_time", {})
+        assert match_fast_path("mute audio") == ("volume_mute", {})
+        assert match_fast_path("set volume to 75") == ("volume_set", {"level": 75})
+        assert match_fast_path("volume 40") == ("volume_set", {"level": 40})
+        assert match_fast_path("set brightness to 80") == ("brightness_set", {"level": 80})
+        assert match_fast_path("take a screenshot") == ("screenshot", {})
+        assert match_fast_path("lock my pc") == ("lock_screen", {})
+        assert match_fast_path("play shiva tandav stotram on youtube") == (
+            "play_youtube",
+            {"query": "shiva tandav stotram"},
+        )
+        assert match_fast_path("turn off the pc") == ("shutdown", {"delay_seconds": 30})
+        assert match_fast_path("cancel shutdown") == ("cancel_shutdown", {})
+        assert match_fast_path("what is quantum computing") is None  # Goes to LLM

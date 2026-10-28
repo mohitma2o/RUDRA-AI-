@@ -1,4 +1,4 @@
-﻿"""RUDRA AI FastAPI backend.
+"""RUDRA AI FastAPI backend.
 
 Starts the WebSocket /ws/voice pipeline and a /health endpoint.
 Spawned by the Electron main process; run directly with:
@@ -17,14 +17,20 @@ from typing import Optional
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-# Make sure the repo root is on the path so we can import rudra.* skills
+# Ensure both backend/ and repo root are in sys.path
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.voice import stt as stt_module
-from app.voice.pipeline import VOICES, run_turn, script_lang
+from app.voice.pipeline import VOICES, run_turn, script_lang, synth
 from app.voice.wake import find_wake, strip_wake
+from app.tools import hardware as _hardware_tools  # noqa: F401
+from app.tools import browser as _browser_tools    # noqa: F401
+from app.tools.registry import REGISTRY, execute, Tier
 
 app = FastAPI(title="RUDRA AI Backend")
 
@@ -77,6 +83,64 @@ def _load_config() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Fast-path intent matching
+# ---------------------------------------------------------------------------
+
+def match_fast_path(raw: str) -> Optional[tuple[str, dict]]:
+    """Match common voice commands to instant tools without hitting the LLM."""
+    text = raw.lower().strip()
+    import re
+    # Time / Date
+    if any(p in text for p in ("what time", "current time", "what is the time", "tell me the time", "what date", "what is today's date")):
+        return ("get_time", {})
+    # System status
+    if any(p in text for p in ("system status", "battery status", "cpu usage", "ram usage", "system stats", "battery level")):
+        return ("system_status", {})
+    # Screenshot
+    if any(p in text for p in ("take a screenshot", "take screenshot", "capture screen", "screenshot")):
+        return ("screenshot", {})
+    # Lock screen
+    if any(p in text for p in ("lock screen", "lock my screen", "lock the screen", "lock my pc", "lock computer")):
+        return ("lock_screen", {})
+    # Mute / Unmute
+    if text in ("mute", "unmute", "toggle mute", "mute audio", "unmute audio"):
+        return ("volume_mute", {})
+    # Media controls
+    if any(p in text for p in ("pause music", "pause video", "play pause", "pause media")):
+        return ("media_control", {"action": "play_pause"})
+    if any(p in text for p in ("next track", "next song", "skip song")):
+        return ("media_control", {"action": "next"})
+    if any(p in text for p in ("previous track", "previous song")):
+        return ("media_control", {"action": "prev"})
+    # Volume control
+    m_vol = re.search(r"(?:set )?volume (?:to )?(\d+)", text)
+    if m_vol:
+        return ("volume_set", {"level": int(m_vol.group(1))})
+    # Brightness control
+    m_bri = re.search(r"(?:set )?brightness (?:to )?(\d+)", text)
+    if m_bri:
+        return ("brightness_set", {"level": int(m_bri.group(1))})
+    if "brightness up" in text or "increase brightness" in text:
+        return ("brightness_up", {})
+    if "brightness down" in text or "decrease brightness" in text or "dim screen" in text:
+        return ("brightness_down", {})
+    # YouTube play
+    m_yt = re.search(r"play (.+?)(?: on youtube|$)", text)
+    if m_yt:
+        return ("play_youtube", {"query": m_yt.group(1).strip()})
+    # Power controls (CONFIRM tier)
+    if any(p in text for p in ("shutdown computer", "shut down computer", "turn off the pc", "turn off computer")):
+        return ("shutdown", {"delay_seconds": 30})
+    if any(p in text for p in ("restart computer", "reboot computer", "reboot the pc", "restart the pc")):
+        return ("restart", {"delay_seconds": 30})
+    if any(p in text for p in ("sleep computer", "put computer to sleep", "sleep pc")):
+        return ("sleep", {})
+    if any(p in text for p in ("cancel shutdown", "cancel restart", "abort shutdown")):
+        return ("cancel_shutdown", {})
+    return None
+
+
+# ---------------------------------------------------------------------------
 # WebSocket session
 # ---------------------------------------------------------------------------
 
@@ -89,6 +153,7 @@ class Session:
         self.task: Optional[asyncio.Task] = None
         self.history: list[dict] = []
         self.send_lock = asyncio.Lock()
+        self.pending_confirm: Optional[asyncio.Future] = None
 
         # Settings (can be updated via 'config' messages)
         cfg = _load_config()
@@ -104,6 +169,58 @@ class Session:
         # is treated as hands-free (no wake word needed)
         self._last_wake_ts: float = 0.0
         self.FOLLOWUP_WINDOW = 8.0
+
+    def handle_confirm(self, approved: bool) -> None:
+        if self.pending_confirm and not self.pending_confirm.done():
+            self.pending_confirm.set_result(approved)
+
+    async def ask_confirm(self, tool_obj, tool_args: dict) -> bool:
+        loop = asyncio.get_running_loop()
+        self.pending_confirm = loop.create_future()
+        await self.send_json({
+            "type": "confirm",
+            "tool": tool_obj.name,
+            "args": tool_args,
+        })
+        try:
+            return await asyncio.wait_for(self.pending_confirm, timeout=20.0)
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            self.pending_confirm = None
+
+    async def speak_direct_reply(self, reply_text: str, user_lang: str) -> None:
+        """Speak a direct result without running Ollama."""
+        await self.interrupt()
+        self.turn_no += 1
+        turn = self.turn_no
+        self.history.append({"role": "assistant", "content": reply_text})
+
+        lang = script_lang(reply_text, user_lang)
+        voice = self.voice_override or VOICES.get(lang, VOICES["en"])
+
+        async with self.send_lock:
+            await self.send_json({
+                "type": "reply_delta",
+                "turn": turn,
+                "text": reply_text,
+            })
+
+        audio_data, mime = await synth(reply_text, voice, lang)
+        if audio_data:
+            async with self.send_lock:
+                await self.send_json({
+                    "type": "audio",
+                    "turn": turn,
+                    "seq": 0,
+                    "lang": lang,
+                    "mime": mime,
+                })
+                await self.send_bytes(audio_data)
+
+        async with self.send_lock:
+            await self.send_json({"type": "turn_end", "turn": turn})
+            await self.send_json({"type": "state", "state": "idle"})
 
     # -----------------------------------------------------------------------
     # Sending helpers
@@ -199,8 +316,13 @@ class Session:
         if not command_text.strip():
             command_text = text
 
-        # TODO (WP5): rule-based fast path (time, volume, etc.) goes here
-        # before hitting the LLM
+        # Fast-path intent matching before hitting LLM
+        fast_match = match_fast_path(command_text)
+        if fast_match:
+            tool_name, tool_args = fast_match
+            result_text = await execute(tool_name, tool_args, confirm=self.ask_confirm)
+            await self.speak_direct_reply(result_text, lang)
+            return
 
         await self.start_turn(command_text, lang)
 
@@ -211,6 +333,15 @@ class Session:
             return
         lang = script_lang(text, "en")
         await self.send_json({"type": "transcript", "text": text, "lang": lang})
+
+        # Fast-path intent matching before hitting LLM
+        fast_match = match_fast_path(text)
+        if fast_match:
+            tool_name, tool_args = fast_match
+            result_text = await execute(tool_name, tool_args, confirm=self.ask_confirm)
+            await self.speak_direct_reply(result_text, lang)
+            return
+
         await self.start_turn(text, lang)
 
     async def update_config(self, cfg: dict) -> None:
@@ -260,8 +391,7 @@ async def ws_voice(ws: WebSocket) -> None:
                     await session.interrupt()
 
                 elif msg_type == "confirm":
-                    # TODO (WP5): route confirm reply to the awaiting tool
-                    pass
+                    session.handle_confirm(msg.get("approved", False))
 
                 elif msg_type == "config":
                     await session.update_config(msg)
