@@ -137,3 +137,17 @@
   deprecation warnings remain.
 - Not yet verified: live Ollama voice-model warm-up, document summarization
   model loading, or latency measurements against a running Ollama/TTS stack.
+
+## WP-B3 — Persistent browser automation
+
+- Moved Playwright startup and all synchronous browser operations to one
+  dedicated worker thread. YouTube searches now reuse a persistent context and
+  page rather than launching a new browser for every request.
+- Added serialized requests, cancellation-safe futures, explicit fallback
+  messages when Playwright is unavailable, and graceful context shutdown with
+  the backend.
+- Added a mocked runtime test covering single-thread ownership, one persistent
+  context, page reuse, and shutdown. Verified `python -m pytest tests -q`
+  (76 passed, 16 subtests) and editor diagnostics for the changed Python files.
+- Not yet verified: launching the bundled Playwright browser or interacting
+  with YouTube on a real Windows desktop.

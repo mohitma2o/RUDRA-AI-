@@ -6,6 +6,7 @@ Spawned by the Electron main process; run directly with:
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import os
 import re
@@ -14,7 +15,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import AsyncIterator, Callable, Optional
 
 import httpx
 import uvicorn
@@ -38,7 +39,16 @@ from app.tools import browser as _browser_tools    # noqa: F401
 from .paths import resource_dir, data_dir, save_user_config
 from app.tools.registry import REGISTRY, execute, Tier
 
-app = FastAPI(title="RUDRA AI Backend")
+@asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    await _startup()
+    try:
+        yield
+    finally:
+        await _shutdown()
+
+
+app = FastAPI(title="RUDRA AI Backend", lifespan=_lifespan)
 _API_TOKEN = os.environ.get("RUDRA_TOKEN")
 if not _API_TOKEN:
     _API_TOKEN = secrets.token_urlsafe(32)
@@ -56,7 +66,6 @@ app.add_middleware(
 # Startup: warm up models
 # ---------------------------------------------------------------------------
 
-@app.on_event("startup")
 async def _startup() -> None:
     # Load & warm STT in background thread
     threading.Thread(target=stt_module.warm_up, daemon=True).start()
@@ -84,6 +93,10 @@ async def _startup() -> None:
             print(f"[LLM] Warm-up failed (non-fatal): {e}")
 
     asyncio.create_task(_warm_ollama())
+
+
+async def _shutdown() -> None:
+    await asyncio.to_thread(_browser_tools.close_browser_runtime)
 
 
 @app.get("/health")
