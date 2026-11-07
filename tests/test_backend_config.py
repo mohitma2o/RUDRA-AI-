@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from backend.app import main
+from backend.app import main, paths
 
 
 def test_legacy_user_model_setting_is_used_as_voice_model(monkeypatch, tmp_path):
@@ -20,8 +20,8 @@ def test_legacy_user_model_setting_is_used_as_voice_model(monkeypatch, tmp_path)
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(main, "resource_dir", lambda: resources)
-    monkeypatch.setattr(main, "data_dir", lambda: user_data)
+    monkeypatch.setattr(paths, "resource_dir", lambda: resources)
+    monkeypatch.setattr(paths, "data_dir", lambda: user_data)
 
     assert main._load_config()["ollama_voice_model"] == "legacy-user-model"
 

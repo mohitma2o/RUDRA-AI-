@@ -89,6 +89,7 @@ Optimized specifically for budget hardware targets (e.g., **Intel i3 10th Gen, 1
 - **🎬 Autonomous Media Control:** Playwright browser automation with persistent context (`.rudra/browser/`) searches and auto-plays songs/videos on YouTube without repetitive sign-ins.
 - **🖥️ Desktop & Hardware Automation:** Control master system volume, screen brightness, take timestamped screenshots to `~/Pictures/Rudra/`, and lock your Windows workstation.
 - **📂 Scoped File Access:** Search, open, and read files only inside Desktop, Documents, Downloads, Pictures, Music, or Videos. App closing requires confirmation.
+- **📄 Document Workspace:** Summarize TXT, Markdown, PDF, DOCX, and PPTX files with the on-demand local document model; follow progress, manage saved summaries, and export Markdown or text notes.
 
 ---
 
@@ -103,6 +104,7 @@ Optimized specifically for budget hardware targets (e.g., **Intel i3 10th Gen, 1
 | **Media** | *"Play Shiva Tandav on YouTube"*, *"Pause music"*, *"Next track"* | `play_youtube`, `media_control` |
 | **Security** | *"Lock my screen"*, *"Take a screenshot"* | `lock_screen`, `screenshot` |
 | **Files** | *"Search file budget"*, *"Open file my report"*, *"Read document notes"* | `search_file`, `open_file`, `read_document` |
+| **Documents** | *"Summarize document my report"* | `summarize_document` |
 | **Folders / Apps** | *"Open my Documents folder"*, *"Open app Notepad"*, *"Close app Notepad"* | `open_folder`, `open_application`; closing requires confirmation |
 | **Power (Safety Gate)**| *"Shutdown computer"*, *"Restart the PC"*, *"Sleep computer"* | Requires Approval (`Tier.CONFIRM`) |
 | **Power Abort** | *"Cancel shutdown"*, *"Abort restart"* | `cancel_shutdown` |
@@ -124,7 +126,7 @@ ollama pull qwen2.5:1.5b
 *(For higher accuracy on machines with 16GB+ RAM, use `ollama pull qwen2.5:3b-instruct-q4_K_M`)*
 
 The voice assistant uses `ollama_voice_model` from `rudra/config.json`. The
-separate `ollama_doc_model` setting is reserved for document summarization.
+separate `ollama_doc_model` is loaded only when a document is summarized.
 
 ### 2. Installation
 ```bash
@@ -144,7 +146,7 @@ npm --prefix frontend install
 ```bash
 npm run dev
 ```
-*This concurrently starts the FastAPI server (`http://127.0.0.1:8000`), the Vite dev server (`http://localhost:5173`), and launches the Electron HUD.*
+*This starts Vite and Electron. Electron reserves a loopback port, starts the FastAPI backend with a per-launch token, and restarts it if it exits.*
 
 ### 4. Production Build & Execution
 ```bash
@@ -154,6 +156,17 @@ npm run build
 # Launch the compiled desktop assistant
 npm start
 ```
+
+### Local API security and logs
+
+The backend binds to `127.0.0.1`. HTTP API requests require the per-launch token;
+the voice WebSocket authenticates its first frame and accepts only the local
+development origin or Electron's `file://` origin (`null`). CORS is restricted
+to those app origins, including the PATCH and DELETE methods used by document
+notes.
+
+Electron writes backend output under its user-data `logs` directory. The active
+`backend.log` is capped at 5 MiB, with up to three rotated backups.
 
 ---
 
@@ -167,15 +180,16 @@ npm start
 
 ## 🧪 Automated Testing
 
-The repository contains an automated test suite with **66 comprehensive unit tests**:
-
 ```bash
-python -m pytest tests/
+python -m pytest tests -q
+npm run test:electron
+npm run build
 ```
 
-- `tests/test_wake.py`: Exact wake words, Hindi Devanagari, Punjabi Gurmukhi, fuzzy typo tolerance, and false-positive rejections.
-- `tests/test_pipeline.py`: Script language detection, sentence boundaries, safety confirmation gates, and fast-path regex intent resolution.
-- `tests/test_agent.py`: Tool dispatch, screen summaries, file search, and dynamic application resolution.
+The Python suite covers voice behavior, local API authentication, file-tool
+allowlisting, document processing, and persistence. The Electron logger tests
+verify bounded rotation and retention. The build checks the frontend and
+desktop TypeScript.
 
 ---
 
@@ -191,20 +205,22 @@ RUDRA-AI-/
 │   ├── src/
 │   │   ├── components/     # Glowing Orb, Live Transcript, Metrics, SettingsModal, HUD
 │   │   ├── hooks/          # useVoicePipeline (Web Audio VAD, barge-in, WebSocket)
+│   │   ├── components/     # HUD, document workspace, setup notice, and voice UI
 │   │   ├── store/          # Zustand voice store
 │   │   └── App.tsx
 │   ├── index.html
 │   └── vite.config.ts      # Tailwind CSS v4 + Vite plugin
 ├── backend/                # FastAPI Streaming Voice Backend
 │   └── app/
-│       ├── main.py         # /ws/voice WebSocket pipeline, warmup, fast-path
+│       ├── main.py         # Authenticated HTTP/WebSocket routes and voice pipeline
+│       ├── documents.py    # Document jobs, SSE progress, notes, and exports
 │       ├── voice/          # faster-whisper STT, rapidfuzz wake, streaming LLM & TTS
 │       └── tools/          # Tool registry, safety tiers, hardware & browser tools
 ├── rudra/                  # Core assets & models
 │   ├── models/rudra.onnx   # Trained wake-word model (tracked in git)
 │   ├── skills/             # Vision, system, file, and OCR skills
 │   └── config.json         # Runtime config
-└── tests/                  # Pytest automated test suite
+└── tests/                  # Python and Electron automated test suites
 ```
 
 ---

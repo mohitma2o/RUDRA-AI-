@@ -141,6 +141,10 @@ class TestFastPath:
             "search_file",
             {"name": "budget"},
         )
+        assert match_fast_path("summarize document my report") == (
+            "summarize_document",
+            {"name": "report"},
+        )
         assert match_fast_path("open folder my documents") == (
             "open_folder",
             {"name": "documents"},

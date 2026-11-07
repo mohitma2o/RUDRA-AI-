@@ -34,11 +34,12 @@ if str(_REPO_ROOT) not in sys.path:
 from app.voice import stt as stt_module
 from app.voice.pipeline import VOICES, run_turn, script_lang, synth
 from app.voice.wake import find_wake, strip_wake
+from app.documents import router as documents_router, shutdown_document_jobs
 from app.tools import hardware as _hardware_tools  # noqa: F401
 from app.tools import browser as _browser_tools    # noqa: F401
 from app.tools import applications as _application_tools  # noqa: F401
 from app.tools import files as _file_tools  # noqa: F401
-from .paths import resource_dir, data_dir, save_user_config
+from .paths import data_dir, load_config, resource_dir, save_user_config
 from app.tools.registry import REGISTRY, execute, Tier
 
 @asynccontextmanager
@@ -56,11 +57,17 @@ if not _API_TOKEN:
     _API_TOKEN = secrets.token_urlsafe(32)
     print(f"[Security] Standalone backend token: {_API_TOKEN}")
 
+_ALLOWED_ORIGINS = (
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "null",
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "null"],
+    allow_origins=list(_ALLOWED_ORIGINS),
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -98,6 +105,7 @@ async def _startup() -> None:
 
 
 async def _shutdown() -> None:
+    await shutdown_document_jobs()
     await asyncio.to_thread(_browser_tools.close_browser_runtime)
 
 
@@ -115,6 +123,12 @@ def _require_api_token(authorization: Optional[str] = Header(default=None)) -> N
     expected = f"Bearer {_API_TOKEN}"
     if not authorization or not secrets.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="A valid local API token is required.")
+
+
+app.include_router(
+    documents_router,
+    dependencies=[Depends(_require_api_token)],
+)
 
 
 @app.get("/api/setup/status")
@@ -195,27 +209,7 @@ async def pull_setup_model(_: None = Depends(_require_api_token)):
 # ---------------------------------------------------------------------------
 
 def _load_config() -> dict:
-    default_path = resource_dir() / "rudra" / "config.json"
-    user_path = data_dir() / "config.json"
-    config: dict = {}
-    user_config: dict = {}
-
-    for config_path in (default_path, user_path):
-        if not config_path.is_file():
-            continue
-        try:
-            loaded = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"Could not load configuration from {config_path}: {exc}") from exc
-        if not isinstance(loaded, dict):
-            raise RuntimeError(f"Configuration at {config_path} must contain a JSON object.")
-        config.update(loaded)
-        if config_path == user_path:
-            user_config = loaded
-
-    if "ollama_voice_model" not in user_config and "ollama_model" in user_config:
-        config["ollama_voice_model"] = user_config["ollama_model"]
-    return config
+    return load_config()
 
 
 # ---------------------------------------------------------------------------
@@ -344,8 +338,13 @@ FAST_PATH_RULES: list[tuple[re.Pattern, str, Callable[[re.Match], dict]]] = [
         _named_arg,
     ),
     (
-        re.compile(r"(?:read|summarize) (?:document|file) (.+?)[.!?]?"),
+        re.compile(r"read (?:document|file) (.+?)[.!?]?"),
         "read_document",
+        _named_arg,
+    ),
+    (
+        re.compile(r"summarize (?:document|file) (.+?)[.!?]?"),
+        "summarize_document",
         _named_arg,
     ),
     (
@@ -608,7 +607,28 @@ class Session:
 
 @app.websocket("/ws/voice")
 async def ws_voice(ws: WebSocket) -> None:
+    if ws.headers.get("origin") not in _ALLOWED_ORIGINS:
+        await ws.close(code=1008)
+        return
+
     await ws.accept()
+    try:
+        auth_message = json.loads(await asyncio.wait_for(ws.receive_text(), timeout=5))
+    except WebSocketDisconnect:
+        return
+    except (TimeoutError, ValueError):
+        await ws.close(code=1008)
+        return
+
+    if (
+        not isinstance(auth_message, dict)
+        or auth_message.get("type") != "auth"
+        or not isinstance(auth_message.get("token"), str)
+        or not secrets.compare_digest(auth_message["token"], _API_TOKEN)
+    ):
+        await ws.close(code=1008)
+        return
+
     session = Session(ws)
     await session.send_json({"type": "state", "state": "idle"})
     pending_meta: Optional[dict] = None  # metadata frame waiting for binary

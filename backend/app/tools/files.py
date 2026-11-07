@@ -34,7 +34,7 @@ def _open_with_default_app(path: Path) -> None:
     },
 )
 async def open_file(name: str) -> str:
-    target, error = _resolve_file_reference(name)
+    target, error = resolve_file_reference(name)
     if error:
         return error
     assert target is not None
@@ -157,7 +157,7 @@ async def search_file(name: str) -> str:
     return await asyncio.to_thread(_search_files, name)
 
 
-def _resolve_file_reference(name: str) -> tuple[Optional[Path], Optional[str]]:
+def resolve_file_reference(name: str) -> tuple[Optional[Path], Optional[str]]:
     candidate = Path(name).expanduser()
     if candidate.is_absolute() or candidate.parent != Path("."):
         target = resolve_allowed_path(candidate)
@@ -231,7 +231,7 @@ def _read_document(path: Path) -> str:
     },
 )
 async def read_document(name: str) -> str:
-    target, error = _resolve_file_reference(name)
+    target, error = resolve_file_reference(name)
     if error:
         return error
     assert target is not None

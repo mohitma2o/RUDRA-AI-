@@ -12,6 +12,7 @@
     "build:electron": "tsc -p electron/tsconfig.json",
     "build:backend": "python backend/scripts/download_whisper.py && python -m PyInstaller backend/rudra-backend.spec --noconfirm --distpath backend/dist --workpath backend/build",
     "build": "npm run build:frontend && npm run build:electron",
+    "test:electron": "npm run build:electron && node --test tests/electron/backendLogger.test.cjs",
     "dist": "npm run build && npm run build:backend && electron-builder --win",
     "start": "electron ."
   },

@@ -16,7 +16,7 @@ hiddenimports = [
     "pyttsx3.drivers.sapi5",
 ]
 
-for package in ("faster_whisper", "ctranslate2"):
+for package in ("faster_whisper", "ctranslate2", "multipart"):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
     datas.extend(package_datas)
     binaries.extend(package_binaries)

@@ -1,10 +1,11 @@
 import { randomBytes } from 'crypto';
-import { appendFileSync, mkdirSync } from 'fs';
+import { mkdirSync } from 'fs';
 import { ChildProcess, spawn } from 'child_process';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, shell, Tray } from 'electron';
 import * as http from 'http';
 import * as path from 'path';
 import { createServer } from 'net';
+import { appendRotatingLog } from './backendLogger';
 
 type BackendStatus = 'starting' | 'ready' | 'failed' | 'restarting';
 
@@ -42,7 +43,7 @@ function sendBackendStatus(status: BackendStatus, message?: string): void {
 function appendBackendLog(data: Buffer | string): void {
   if (!backendLogPath) return;
   try {
-    appendFileSync(backendLogPath, data);
+    appendRotatingLog(backendLogPath, data);
   } catch (error) {
     console.error('[Backend] Could not write backend log:', error);
   }

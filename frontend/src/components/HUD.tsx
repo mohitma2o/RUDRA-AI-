@@ -4,13 +4,15 @@ import { Transcript } from './Transcript';
 import { Metrics } from './Metrics';
 import { SettingsModal } from './SettingsModal';
 import { SetupNotice } from './SetupNotice';
+import { DocumentsWorkspace } from './DocumentsWorkspace';
 import { useVoicePipeline } from '../hooks/useVoicePipeline';
 import { useVoiceStore } from '../store/voiceStore';
-import { Settings, Send, X, Minus, Sparkles, Volume2 } from 'lucide-react';
+import { Settings, Send, X, Minus, Sparkles, FileText } from 'lucide-react';
 
 export const HUD: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDocumentsOpen, setIsDocumentsOpen] = useState(false);
   const { state, mode, backendStatus, backendMessage } = useVoiceStore();
   const { interrupt, sendTextQuery, sendConfirmResponse } = useVoicePipeline();
 
@@ -54,6 +56,14 @@ export const HUD: React.FC = () => {
 
         {/* Window action buttons */}
         <div className="flex items-center gap-1.5" data-no-drag>
+          <button
+            onClick={() => setIsDocumentsOpen(true)}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors"
+            title="Documents"
+            aria-label="Open document workspace"
+          >
+            <FileText className="w-3.5 h-3.5" />
+          </button>
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors"
@@ -125,6 +135,10 @@ export const HUD: React.FC = () => {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+      />
+      <DocumentsWorkspace
+        isOpen={isDocumentsOpen}
+        onClose={() => setIsDocumentsOpen(false)}
       />
     </div>
   );

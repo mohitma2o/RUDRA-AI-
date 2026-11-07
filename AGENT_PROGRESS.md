@@ -93,9 +93,8 @@
   returned HTTP 401, and the backend stopped after the test process tree was
   terminated.
 - Not yet verified: Ollama installation/model download progress against a live
-  Ollama server, production `file://` CORS origin behavior, or live TTS network
-  status. The `null` file-origin CORS entry remains to be validated and
-  tightened in WP-D1.
+  Ollama server or live TTS network status. Production `file://` origin policy
+  and API/WebSocket authentication are covered in WP-D1.
 
 ## WP-B1 — Voice client reliability
 
@@ -127,8 +126,7 @@
 - Added separate `ollama_voice_model` and `ollama_doc_model` settings. Startup
   and setup status now use only the voice model, and legacy per-user
   `ollama_model` overrides migrate to the voice-model setting. The document
-  model remains reserved for the document workflow, which is not implemented
-  yet.
+  model is selected on demand by the document workflow.
 - Corrected timing measurements to capture the first streamed LLM token and
   full-turn duration, emit timing events, and print latency metrics to the
   backend log.
@@ -169,3 +167,52 @@
   Windows disallows creating test symlinks.
 - Not yet verified: launching applications and opening files/folders on a
   physical Windows desktop.
+
+## Phase 3 — Document workspace
+
+- Added authenticated upload, job status, cancellation, and replayable SSE
+  progress APIs. Documents are size/type limited, extracted for TXT, Markdown,
+  PDF, DOCX, and PPTX, chunked, summarized in map/reduce passes, and removed
+  from temporary storage after processing.
+- Added a per-user SQLite notes library with rename/delete and Markdown/text
+  exports. The document model loads only when needed. A voice command can
+  summarize an allowlisted local document, and the HUD now opens a workspace
+  for uploads, progress, and note management.
+- Added the multipart upload dependency and included it in the frozen backend
+  spec; centralized config loading for voice and document model selection.
+- Verified the focused document/config tests (23 passed) and `npm run build`.
+- Not yet verified: real Ollama document summarization, physical Electron
+  uploads/exports, or Windows frozen-backend behavior.
+
+## WP-D1 — Local API perimeter
+
+- The voice WebSocket now checks the renderer origin and authenticates a
+  first-frame token before creating a voice session. The token is not placed
+  in the WebSocket URL. HTTP APIs continue to require the per-launch token.
+- Restricted CORS to the two loopback development origins and Electron's
+  `file://` origin (`null`), and allowed only the methods used by the app,
+  including document-note PATCH and DELETE operations.
+- Added tests for valid/invalid WebSocket tokens, rejected origins, and
+  development and file-origin CORS preflights. The full Python suite passes.
+- Not yet verified: requests from a packaged Electron build on a clean Windows
+  machine.
+
+## WP-D2 — Rotating backend logs
+
+- Added synchronous size-based log rotation for Electron-captured backend
+  output: a 5 MiB active file and up to three retained backups. Rotation/write
+  errors are surfaced to the Electron console.
+- Added Node tests for rotation, retention, and normal append behavior.
+  `npm run test:electron` passes (2 tests).
+
+## WP-E — Final acceptance and CI
+
+- Added a Windows GitHub Actions workflow that installs pinned backend and
+  desktop dependencies, runs the Python and Electron logger tests, and builds
+  the frontend and Electron application.
+- Final local verification: `python -m pytest tests -q` (93 passed, 1 skipped,
+  16 subtests), `npm run test:electron` (2 passed), `npm run build`, editor
+  diagnostics for changed application files, and `git diff --check`.
+- Still outstanding: live Ollama summaries, physical Windows audio/desktop
+  interaction, and a packaged PyInstaller/Electron installer smoke test. These
+  require local services, hardware, and/or the large Whisper model download.
