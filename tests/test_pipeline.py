@@ -133,6 +133,22 @@ class TestFastPath:
             "play_youtube",
             {"query": "shiva tandav"},
         )
+        assert match_fast_path("open file my report") == (
+            "open_file",
+            {"name": "report"},
+        )
+        assert match_fast_path("search file budget") == (
+            "search_file",
+            {"name": "budget"},
+        )
+        assert match_fast_path("open folder my documents") == (
+            "open_folder",
+            {"name": "documents"},
+        )
+        assert match_fast_path("close app browser") == (
+            "close_application",
+            {"name": "browser"},
+        )
 
 
 def test_stt_model_size_is_unchanged_without_reload(monkeypatch):

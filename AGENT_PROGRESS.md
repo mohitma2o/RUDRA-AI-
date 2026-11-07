@@ -151,3 +151,21 @@
   (76 passed, 16 subtests) and editor diagnostics for the changed Python files.
 - Not yet verified: launching the bundled Playwright browser or interacting
   with YouTube on a real Windows desktop.
+
+## WP-B4 — Allowlisted desktop and file tools
+
+- Added backend tools for opening/searching/reading files and opening folders.
+  Every supplied file or folder path is resolved and checked against
+  `ALLOWED_FILE_ROOTS`; symlink escapes are rejected, and recursive searches
+  never follow directory symlinks or leave the approved roots.
+- Ported the legacy application open/close operations. Closing an application
+  now uses the existing confirmation tier. Added explicit voice fast paths for
+  file, folder, and application commands.
+- Document reads support TXT, Markdown, DOCX, and PDF and remain capped at
+  3,000 characters. Updated the README with the available commands and file
+  access boundary.
+- Verified `python -m pytest tests -q` (83 passed, 1 skipped, 16 subtests) and
+  editor diagnostics. Symlink escape coverage is skipped on environments where
+  Windows disallows creating test symlinks.
+- Not yet verified: launching applications and opening files/folders on a
+  physical Windows desktop.

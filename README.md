@@ -88,6 +88,7 @@ Optimized specifically for budget hardware targets (e.g., **Intel i3 10th Gen, 1
   - **Punjabi (Gurmukhi):** `pa-IN-GaganNeural`
 - **🎬 Autonomous Media Control:** Playwright browser automation with persistent context (`.rudra/browser/`) searches and auto-plays songs/videos on YouTube without repetitive sign-ins.
 - **🖥️ Desktop & Hardware Automation:** Control master system volume, screen brightness, take timestamped screenshots to `~/Pictures/Rudra/`, and lock your Windows workstation.
+- **📂 Scoped File Access:** Search, open, and read files only inside Desktop, Documents, Downloads, Pictures, Music, or Videos. App closing requires confirmation.
 
 ---
 
@@ -101,6 +102,8 @@ Optimized specifically for budget hardware targets (e.g., **Intel i3 10th Gen, 1
 | **Brightness** | *"Increase brightness"*, *"Set brightness to 80"*, *"Dim screen"* | `brightness_set`, `brightness_up` |
 | **Media** | *"Play Shiva Tandav on YouTube"*, *"Pause music"*, *"Next track"* | `play_youtube`, `media_control` |
 | **Security** | *"Lock my screen"*, *"Take a screenshot"* | `lock_screen`, `screenshot` |
+| **Files** | *"Search file budget"*, *"Open file my report"*, *"Read document notes"* | `search_file`, `open_file`, `read_document` |
+| **Folders / Apps** | *"Open my Documents folder"*, *"Open app Notepad"*, *"Close app Notepad"* | `open_folder`, `open_application`; closing requires confirmation |
 | **Power (Safety Gate)**| *"Shutdown computer"*, *"Restart the PC"*, *"Sleep computer"* | Requires Approval (`Tier.CONFIRM`) |
 | **Power Abort** | *"Cancel shutdown"*, *"Abort restart"* | `cancel_shutdown` |
 

@@ -36,6 +36,8 @@ from app.voice.pipeline import VOICES, run_turn, script_lang, synth
 from app.voice.wake import find_wake, strip_wake
 from app.tools import hardware as _hardware_tools  # noqa: F401
 from app.tools import browser as _browser_tools    # noqa: F401
+from app.tools import applications as _application_tools  # noqa: F401
+from app.tools import files as _file_tools  # noqa: F401
 from .paths import resource_dir, data_dir, save_user_config
 from app.tools.registry import REGISTRY, execute, Tier
 
@@ -224,6 +226,12 @@ def _empty_args(_: re.Match) -> dict:
     return {}
 
 
+def _named_arg(match: re.Match) -> dict:
+    name = match.group(1).strip(" .!?")
+    name = re.sub(r"^(?:my|the|a|an)\s+", "", name, flags=re.IGNORECASE)
+    return {"name": name}
+
+
 FAST_PATH_RULES: list[tuple[re.Pattern, str, Callable[[re.Match], dict]]] = [
     (
         re.compile(
@@ -314,6 +322,41 @@ FAST_PATH_RULES: list[tuple[re.Pattern, str, Callable[[re.Match], dict]]] = [
         re.compile(r"(?:sleep computer|put computer to sleep|sleep pc)[.!?]?"),
         "sleep",
         _empty_args,
+    ),
+    (
+        re.compile(r"open (?:my )?(desktop|documents|downloads|pictures|music|videos)(?: folder)?[.!?]?"),
+        "open_folder",
+        _named_arg,
+    ),
+    (
+        re.compile(r"open folder (.+?)[.!?]?"),
+        "open_folder",
+        _named_arg,
+    ),
+    (
+        re.compile(r"open file (.+?)[.!?]?"),
+        "open_file",
+        _named_arg,
+    ),
+    (
+        re.compile(r"(?:search|find) file (.+?)[.!?]?"),
+        "search_file",
+        _named_arg,
+    ),
+    (
+        re.compile(r"(?:read|summarize) (?:document|file) (.+?)[.!?]?"),
+        "read_document",
+        _named_arg,
+    ),
+    (
+        re.compile(r"(?:open|launch|start) (?:application|app) (.+?)[.!?]?"),
+        "open_application",
+        _named_arg,
+    ),
+    (
+        re.compile(r"(?:close|quit) (?:application|app) (.+?)[.!?]?"),
+        "close_application",
+        _named_arg,
     ),
     (
         re.compile(r"play\s+(.+?)(?:\s+on youtube)?[.!?]?"),

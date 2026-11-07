@@ -61,6 +61,23 @@ def tool(
     return decorator
 
 
+def resolve_allowed_path(path: str | Path) -> Optional[Path]:
+    """Resolve a file path only when it stays inside an approved user folder."""
+    try:
+        resolved = Path(path).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+
+    for root in ALLOWED_FILE_ROOTS:
+        try:
+            allowed_root = root.expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            continue
+        if resolved == allowed_root or resolved.is_relative_to(allowed_root):
+            return resolved
+    return None
+
+
 def _validate_args(t: Tool, args: dict) -> Optional[str]:
     """Basic argument validation against the tool schema. Returns error msg or None."""
     required = t.schema.get("required", [])
