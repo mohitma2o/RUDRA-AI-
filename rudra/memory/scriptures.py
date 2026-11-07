@@ -25,6 +25,19 @@ CHROMA_DB_PATH = Path(os.getenv("CHROMA_DB_PATH", BASE_DIR / "rudra_chroma"))
 CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
 COLLECTION_NAME = "scriptures"
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+DEFAULT_SCRIPTURE_TEXT = """
+Bhagavad Gita 2.47
+You have a right to perform your duty, but not to the fruits of action.
+Let not the fruits of action be your motive, nor let your attachment be to inaction.
+
+Bhagavad Gita 3.19
+Therefore, without being attached to the fruits of activities, one should act as a matter of duty, for by working without attachment one attains the Supreme.
+
+Bhagavad Gita 18.66
+Abandon all varieties of dharma and just surrender unto Me. I shall deliver you from all sinful reactions; do not fear.
+
+The Gita teaches that one should do one's duty with detachment, seeking wisdom rather than personal gain, and trust the higher purpose of action.
+""".strip()
 
 _client: Any = None
 _collection: Any = None
@@ -121,12 +134,41 @@ def _chunk_text(text: str, max_chars: int = 900) -> list[str]:
     return chunks
 
 
+def _seed_default_corpus() -> None:
+    """Populate the collection from the checked-in scripture data if it's empty."""
+    collection = _get_collection()
+    if collection is None or collection.count() > 0:
+        return
+
+    data_dir = BASE_DIR / "data" / "scriptures"
+    txt_files = sorted(data_dir.glob("*.txt")) if data_dir.exists() else []
+    if txt_files:
+        for file_path in txt_files:
+            try:
+                text = file_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                try:
+                    text = file_path.read_text(encoding="latin-1")
+                except Exception:
+                    continue
+            except Exception:
+                continue
+            if text and text.strip():
+                add_scripture_text(file_path.stem, text)
+        return
+
+    add_scripture_text("Bhagavad Gita", DEFAULT_SCRIPTURE_TEXT)
+
+
 def add_scripture_text(source_name: str, text: str) -> None:
     """Add scripture text to the ChromaDB collection with source attribution."""
     if not text or not text.strip():
         return
 
     collection = _get_collection()
+    if collection is None:
+        return
+
     chunks = _chunk_text(text)
     if not chunks:
         return
@@ -153,13 +195,15 @@ def query(question: str, k: int = 3) -> list[dict[str, Any]]:
     if collection is None:
         return []
 
-    count = collection.count()
-    if count == 0:
+    if collection.count() == 0:
+        _seed_default_corpus()
+
+    if collection.count() == 0:
         return []
 
     results = collection.query(
         query_texts=[question],
-        n_results=min(k, count),
+        n_results=min(k, collection.count()),
         include=["documents", "metadatas", "distances"],
     )
 

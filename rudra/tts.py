@@ -106,7 +106,14 @@ def stop_speaking() -> None:
 
 
 def speak_text(text: str, language: str = "en") -> None:
-    """Synthesize and play speech for the given text."""
+    """Synthesize and play speech for the given text.
+
+    The project can run without network access to Microsoft's Edge TTS service.
+    In that case, we degrade gracefully instead of crashing the caller.
+    """
+    if not text or not text.strip():
+        return
+
     try:
         import edge_tts
     except ImportError as exc:
@@ -123,6 +130,8 @@ def speak_text(text: str, language: str = "en") -> None:
         _run_async(edge_tts.Communicate(text, voice=voice, rate="+15%").save(str(audio_path)))
         print(f"Playing output file: {audio_path}")
         _play_audio_file(audio_path)
+    except Exception as exc:
+        print(f"Speech synthesis unavailable; skipping playback. Reason: {exc}")
     finally:
         if not _keep_temp_audio and audio_path.exists():
             try:
