@@ -10,6 +10,7 @@
     "dev:electron": "wait-on tcp:127.0.0.1:5173 && electron .",
     "build:frontend": "npm --prefix frontend run build",
     "build:electron": "tsc -p electron/tsconfig.json",
+    "build:backend": "python backend/scripts/download_whisper.py && python -m PyInstaller backend/rudra-backend.spec --noconfirm --distpath backend/dist --workpath backend/build",
     "build": "npm run build:frontend && npm run build:electron",
     "start": "electron ."
   },

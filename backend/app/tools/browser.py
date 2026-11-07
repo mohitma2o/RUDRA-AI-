@@ -1,26 +1,22 @@
 """Browser automation tools: YouTube playback, web search, web navigation.
 
-Uses Playwright with a persistent context located at .rudra/browser/ to preserve
+Uses Playwright with a persistent context in the user data directory to preserve
 cookies, media playback states, and sessions across assistant turns.
 """
 
 import asyncio
-import os
-import sys
 import urllib.parse
 from pathlib import Path
 from typing import Optional
 
+from ..paths import data_dir
 from .registry import Tier, tool
-
-# Persistent profile directory in repo root: .rudra/browser/
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_BROWSER_PROFILE_DIR = _REPO_ROOT / ".rudra" / "browser"
 
 
 def _ensure_profile_dir() -> Path:
-    _BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    return _BROWSER_PROFILE_DIR
+    profile_dir = data_dir() / "browser"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    return profile_dir
 
 
 @tool(

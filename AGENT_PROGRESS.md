@@ -43,3 +43,21 @@
 - Not yet verified: packaged runtime resource paths, clean-machine installer,
   Windows startup setting, process-tree behavior in a packaged release, or
   runtime CSP/navigation behavior in a visual UI test.
+
+## WP-A3 — Frozen backend foundations
+
+- Added `backend/app/paths.py` for immutable bundled resources and writable
+  per-user data, merged default/user config loading, atomic user-config saving,
+  and user-data storage for the Playwright profile.
+- Added a frozen-safe `backend/run.py`, a pinned PyInstaller build dependency,
+  a one-folder spec, and a model-download step for bundling faster-whisper
+  `base`. The core dependency list now excludes unused, heavyweight optional
+  packages; Playwright, ChromaDB, sentence-transformers, EasyOCR, and OpenCV
+  are in `backend/requirements-optional.txt`.
+- Added `python-pptx` to core dependencies for the planned PPTX document
+  extraction feature. Added backend build/model output paths to `.gitignore`.
+- Verified `npm run build` and `python -m pytest tests -q` (69 passed).
+- Not yet verified: installing the split requirements from scratch, downloading
+  Whisper weights, PyInstaller execution, frozen one-folder startup, or the
+  resulting executable size. The model download/build was not run because it
+  requires network access and produces a large model bundle.

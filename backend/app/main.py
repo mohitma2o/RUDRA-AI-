@@ -30,6 +30,7 @@ from app.voice.pipeline import VOICES, run_turn, script_lang, synth
 from app.voice.wake import find_wake, strip_wake
 from app.tools import hardware as _hardware_tools  # noqa: F401
 from app.tools import browser as _browser_tools    # noqa: F401
+from .paths import resource_dir, data_dir, save_user_config
 from app.tools.registry import REGISTRY, execute, Tier
 
 app = FastAPI(title="RUDRA AI Backend")
@@ -75,11 +76,21 @@ async def health():
 # ---------------------------------------------------------------------------
 
 def _load_config() -> dict:
-    cfg_path = _REPO_ROOT / "rudra" / "config.json"
-    if cfg_path.exists():
-        with cfg_path.open(encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    default_path = resource_dir() / "rudra" / "config.json"
+    user_path = data_dir() / "config.json"
+    config: dict = {}
+
+    for config_path in (default_path, user_path):
+        if not config_path.is_file():
+            continue
+        try:
+            loaded = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Could not load configuration from {config_path}: {exc}") from exc
+        if not isinstance(loaded, dict):
+            raise RuntimeError(f"Configuration at {config_path} must contain a JSON object.")
+        config.update(loaded)
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +172,7 @@ class Session:
         self.model = cfg.get("ollama_voice_model",
                              cfg.get("ollama_model", "qwen2.5:1.5b"))
         self.language = cfg.get("language", "auto")
-        self.voice_override: Optional[str] = None
+        self.voice_override: Optional[str] = cfg.get("tts_voice") or None
         self.stt_model = cfg.get("stt_model", "base")
         stt_module.set_model_size(self.stt_model)
 
@@ -345,15 +356,22 @@ class Session:
         await self.start_turn(text, lang)
 
     async def update_config(self, cfg: dict) -> None:
+        persisted = {}
         if "language" in cfg:
             self.language = cfg["language"]
+            persisted["language"] = cfg["language"]
         if "voice" in cfg:
             self.voice_override = cfg["voice"] or None
+            persisted["tts_voice"] = cfg["voice"]
         if "stt_model" in cfg:
             self.stt_model = cfg["stt_model"]
             stt_module.set_model_size(self.stt_model)
+            persisted["stt_model"] = cfg["stt_model"]
         if "llm_model" in cfg:
             self.model = cfg["llm_model"]
+            persisted["ollama_model"] = cfg["llm_model"]
+        if persisted:
+            save_user_config(persisted)
 
 
 # ---------------------------------------------------------------------------
@@ -416,9 +434,4 @@ async def ws_voice(ws: WebSocket) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    uvicorn.run(
-        "app.main:app",
-        host="127.0.0.1",
-        port=8000,
-        log_level="info",
-    )
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("RUDRA_PORT", "8000")), log_level="info")

@@ -29,6 +29,9 @@ dist/
 release/
 frontend/dist/
 electron/dist/
+backend/dist/
+backend/build/
+backend/models/whisper-base/
 
 # Databases / logs
 *.db

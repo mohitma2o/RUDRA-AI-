@@ -1,10 +1,14 @@
 ﻿"""Speech-to-text using faster-whisper, accepting raw PCM bytes from the WebSocket."""
 
 import asyncio
+import os
 import threading
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+from ..paths import resource_dir
 
 ALLOWED_LANGS = {"en", "hi", "pa"}
 # Whisper often tags Hindi speech as Urdu; remap to Hindi
@@ -26,11 +30,12 @@ def _load_model() -> object:
     with _model_lock:
         if _model is None:
             from faster_whisper import WhisperModel
-            import os
             cpu_threads = int(os.cpu_count() or 4)
             print(f"[STT] Loading faster-whisper '{_model_size}' ({cpu_threads} threads)...")
+            bundled_model = resource_dir() / "backend" / "models" / f"whisper-{_model_size}"
+            model_name_or_path = str(bundled_model) if bundled_model.is_dir() else _model_size
             _model = WhisperModel(
-                _model_size, device="cpu", compute_type="int8", cpu_threads=cpu_threads
+                model_name_or_path, device="cpu", compute_type="int8", cpu_threads=cpu_threads
             )
             print("[STT] Model loaded.")
     return _model
