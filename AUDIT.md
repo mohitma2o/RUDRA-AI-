@@ -1,3 +1,9 @@
+# HISTORICAL AUDIT — 2026-10-28
+
+> This audit records an earlier repository state and is not an authoritative
+> description of the current application. Verify all findings against the current
+> code before acting on them.
+
 # RUDRA AI - WP0 Code Audit
 
 **Audited by:** Antigravity (AI coding agent)
@@ -191,4 +197,3 @@ Result: NONE FOUND
 - **Barge-in:** Audio playback automatically terminates instantly upon user speech detection or orb click.
 - **Safety Tiers:** Tier.CONFIRM requires explicit voice/UI approval before shutdown/restart/sleep actions execute.
 - **Model Warmup:** Background daemon loads whisper base and pings Ollama with `keep_alive: 30m` on startup.
-
