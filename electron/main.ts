@@ -1,54 +1,246 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, Tray } from 'electron';
-import * as path from 'path';
-import { spawn, ChildProcess } from 'child_process';
+import { randomBytes } from 'crypto';
+import { appendFileSync, mkdirSync } from 'fs';
+import { ChildProcess, spawn } from 'child_process';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, shell, Tray } from 'electron';
 import * as http from 'http';
+import * as path from 'path';
+import { createServer } from 'net';
+
+type BackendStatus = 'starting' | 'ready' | 'failed' | 'restarting';
+
+interface BackendConfig {
+  httpBase: string;
+  wsUrl: string;
+  token: string;
+}
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let backendProcess: ChildProcess | null = null;
-const isDev = process.env.NODE_ENV !== 'production' && !app.isPackaged;
+let backendConfig: BackendConfig | null = null;
+let backendLogPath = '';
+let restartCount = 0;
+let restartScheduled = false;
+let isQuitting = false;
+const isDev = !app.isPackaged;
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
+function sendBackendStatus(status: BackendStatus, message?: string): void {
+  mainWindow?.webContents.send('backend-status', { status, message });
+}
+
+function appendBackendLog(data: Buffer | string): void {
+  if (!backendLogPath) return;
+  try {
+    appendFileSync(backendLogPath, data);
+  } catch (error) {
+    console.error('[Backend] Could not write backend log:', error);
+  }
+}
+
+function findAvailablePort(preferredPort: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', (error: NodeJS.ErrnoException) => {
+      if (preferredPort !== 0 && error.code === 'EADDRINUSE') {
+        findAvailablePort(0).then(resolve, reject);
+      } else {
+        reject(error);
+      }
+    });
+    server.listen(preferredPort, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('Could not determine the backend port.'));
+        return;
+      }
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(address.port);
+      });
+    });
+  });
+}
 
 function checkBackendHealth(): Promise<boolean> {
+  const config = backendConfig;
+  if (!config) return Promise.resolve(false);
   return new Promise((resolve) => {
-    const req = http.get('http://127.0.0.1:8000/health', (res) => {
+    const req = http.get(`${config.httpBase}/health`, (res) => {
+      res.resume();
       resolve(res.statusCode === 200);
     });
     req.on('error', () => resolve(false));
-    req.setTimeout(1000, () => {
+    req.setTimeout(1500, () => {
       req.destroy();
       resolve(false);
     });
   });
 }
 
-async function spawnBackendIfNeeded(): Promise<void> {
-  const isRunning = await checkBackendHealth();
-  if (isRunning) {
-    console.log('[Backend] Existing backend detected on port 8000.');
-    return;
-  }
-
-  const repoRoot = path.resolve(__dirname, '../../');
-  const backendDir = path.join(repoRoot, 'backend');
-
-  console.log('[Backend] Spawning FastAPI backend...');
-  backendProcess = spawn(
-    'python',
-    ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000'],
-    {
-      cwd: backendDir,
-      env: { ...process.env, PYTHONPATH: repoRoot },
-      shell: true,
-      stdio: 'inherit',
-    }
-  );
-
-  backendProcess.on('error', (err) => {
-    console.error('[Backend] Failed to start backend:', err);
+function waitForBackend(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    let finished = false;
+    const complete = (ready: boolean) => {
+      if (finished) return;
+      finished = true;
+      clearInterval(timer);
+      child.removeListener('exit', onExit);
+      resolve(ready);
+    };
+    const onExit = () => complete(false);
+    const timer = setInterval(async () => {
+      if (child.exitCode !== null || child.killed) {
+        complete(false);
+      } else if (await checkBackendHealth()) {
+        complete(true);
+      } else if (Date.now() >= deadline) {
+        complete(false);
+      }
+    }, 500);
+    child.once('exit', onExit);
   });
 }
 
+function scheduleBackendRestart(): void {
+  if (isQuitting || restartScheduled) return;
+  if (restartCount >= 3) {
+    sendBackendStatus('failed', `Backend stopped. See the log at ${backendLogPath}`);
+    return;
+  }
+  restartScheduled = true;
+  restartCount += 1;
+  const delayMs = 1000 * 2 ** (restartCount - 1);
+  sendBackendStatus('restarting', `Restart attempt ${restartCount} of 3`);
+  setTimeout(() => {
+    restartScheduled = false;
+    void startBackend(true);
+  }, delayMs);
+}
+
+async function startBackend(isRestart = false): Promise<void> {
+  if (isQuitting || backendProcess) return;
+
+  sendBackendStatus(isRestart ? 'restarting' : 'starting');
+  try {
+    if (!backendConfig) {
+      const port = await findAvailablePort(8000);
+      backendConfig = {
+        httpBase: `http://127.0.0.1:${port}`,
+        wsUrl: `ws://127.0.0.1:${port}/ws/voice`,
+        token: randomBytes(32).toString('hex'),
+      };
+    }
+
+    const userDataDir = app.getPath('userData');
+    const logsDir = path.join(userDataDir, 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    backendLogPath = path.join(logsDir, 'backend.log');
+    appendBackendLog(`\n[${new Date().toISOString()}] Starting backend.\n`);
+
+    const repoRoot = isDev ? path.resolve(__dirname, '../../') : app.getAppPath();
+    const backendDir = path.join(repoRoot, 'backend');
+    const executable = path.join(process.resourcesPath, 'backend', 'rudra-backend.exe');
+    const args = isDev
+      ? ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', new URL(backendConfig.httpBase).port]
+      : [];
+    const command = isDev ? (process.env.PYTHON || 'python') : executable;
+
+    const child = spawn(command, args, {
+      cwd: isDev ? backendDir : path.dirname(executable),
+      env: {
+        ...process.env,
+        PYTHONPATH: repoRoot,
+        RUDRA_PORT: new URL(backendConfig.httpBase).port,
+        RUDRA_TOKEN: backendConfig.token,
+        RUDRA_DATA_DIR: userDataDir,
+      },
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    backendProcess = child;
+    child.stdout?.on('data', appendBackendLog);
+    child.stderr?.on('data', appendBackendLog);
+    child.on('error', (error) => {
+      appendBackendLog(`[${new Date().toISOString()}] Backend launch error: ${error.message}\n`);
+      if (backendProcess === child) backendProcess = null;
+      sendBackendStatus('failed', `Could not start the backend. See ${backendLogPath}`);
+      scheduleBackendRestart();
+    });
+    child.on('exit', (code, signal) => {
+      appendBackendLog(`[${new Date().toISOString()}] Backend exited (code=${code}, signal=${signal}).\n`);
+      if (backendProcess === child) backendProcess = null;
+      if (!isQuitting) {
+        sendBackendStatus('failed', `Backend exited. See ${backendLogPath}`);
+        scheduleBackendRestart();
+      }
+    });
+
+    const ready = await waitForBackend(child, 120_000);
+    if (ready) {
+      restartCount = 0;
+      sendBackendStatus('ready');
+    } else if (!isQuitting && child.exitCode === null) {
+      appendBackendLog(`[${new Date().toISOString()}] Backend readiness timed out.\n`);
+      sendBackendStatus('failed', `Backend did not become ready. See ${backendLogPath}`);
+      killBackend();
+    }
+  } catch (error) {
+    appendBackendLog(`[${new Date().toISOString()}] Backend startup error: ${String(error)}\n`);
+    sendBackendStatus('failed', `Could not start the backend. See ${backendLogPath}`);
+    scheduleBackendRestart();
+  }
+}
+
+function killBackend(): void {
+  const child = backendProcess;
+  if (!child?.pid) return;
+  backendProcess = null;
+  if (process.platform === 'win32') {
+    const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    killer.on('error', (error) => {
+      appendBackendLog(`Could not terminate backend process tree: ${error.message}\n`);
+    });
+  } else {
+    child.kill('SIGTERM');
+  }
+}
+
+function isAllowedAppUrl(url: string): boolean {
+  if (isDev) return url.startsWith('http://127.0.0.1:5173/');
+  return url.startsWith('file://');
+}
+
+function openExternalUrl(url: string): void {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      void shell.openExternal(parsed.toString());
+    }
+  } catch (error) {
+    console.warn('[Electron] Refusing invalid external URL:', error);
+  }
+}
+
 function createWindow(): void {
+  const iconPath = isDev
+    ? path.resolve(__dirname, '../../rudra/tray_icon.ico')
+    : path.join(process.resourcesPath, 'tray_icon.ico');
   mainWindow = new BrowserWindow({
     width: 440,
     height: 640,
@@ -59,23 +251,33 @@ function createWindow(): void {
     resizable: false,
     skipTaskbar: false,
     hasShadow: true,
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
   });
 
-  if (isDev) {
-    mainWindow.loadURL('http://127.0.0.1:5173');
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../../frontend/dist/index.html'));
-  }
-
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalUrl(url);
+    return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedAppUrl(url)) {
+      event.preventDefault();
+      openExternalUrl(url);
+    }
   });
 
+  if (isDev) {
+    void mainWindow.loadURL('http://127.0.0.1:5173');
+  } else {
+    void mainWindow.loadFile(path.join(__dirname, '../../frontend/dist/index.html'));
+  }
+
+  mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -95,84 +297,73 @@ function toggleWindow(): void {
 }
 
 function createTray(): void {
-  const iconPath = path.resolve(__dirname, '../../rudra/tray_icon.ico');
+  const iconPath = isDev
+    ? path.resolve(__dirname, '../../rudra/tray_icon.ico')
+    : path.join(process.resourcesPath, 'tray_icon.ico');
   try {
     tray = new Tray(iconPath);
-  } catch (err) {
-    console.warn('[Tray] Could not load tray icon, continuing without it:', err);
+  } catch (error) {
+    console.warn('[Tray] Could not load tray icon:', error);
     return;
   }
 
   const contextMenu = Menu.buildFromTemplate([
+    { label: 'Toggle HUD (Ctrl+Shift+Space)', click: toggleWindow },
+    { label: 'Show HUD', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    { label: 'Hide HUD', click: () => mainWindow?.hide() },
     {
-      label: 'Toggle HUD (Ctrl+Shift+Space)',
-      click: () => toggleWindow(),
-    },
-    {
-      label: 'Show HUD',
-      click: () => {
-        mainWindow?.show();
-        mainWindow?.focus();
-      },
-    },
-    {
-      label: 'Hide HUD',
-      click: () => mainWindow?.hide(),
+      label: 'Start with Windows',
+      type: 'checkbox',
+      checked: app.getLoginItemSettings().openAtLogin,
+      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
     },
     { type: 'separator' },
-    {
-      label: 'Quit Rudra',
-      click: () => {
-        app.quit();
-      },
-    },
+    { label: 'Quit Rudra', click: () => app.quit() },
   ]);
-
   tray.setToolTip('Rudra AI Desktop Assistant');
   tray.setContextMenu(contextMenu);
-  tray.on('click', () => toggleWindow());
+  tray.on('click', toggleWindow);
 }
 
-// IPC Handlers
-ipcMain.on('window-hide', () => {
-  mainWindow?.hide();
+ipcMain.on('window-hide', () => mainWindow?.hide());
+ipcMain.on('window-minimize', () => mainWindow?.minimize());
+ipcMain.on('window-close', () => mainWindow?.hide());
+ipcMain.handle('get-version', () => app.getVersion());
+ipcMain.handle('get-backend-config', () => backendConfig);
+ipcMain.handle('open-backend-log', () => {
+  if (backendLogPath) void shell.openPath(backendLogPath);
 });
 
-ipcMain.on('window-minimize', () => {
-  mainWindow?.minimize();
-});
-
-ipcMain.on('window-close', () => {
-  mainWindow?.hide();
-});
-
-ipcMain.handle('get-version', () => {
-  return app.getVersion();
-});
-
-// App Lifecycle
-app.whenReady().then(async () => {
-  await spawnBackendIfNeeded();
-  createWindow();
-  createTray();
-
-  // Register Global Hotkey
-  globalShortcut.register('CommandOrControl+Shift+Space', () => {
-    toggleWindow();
-  });
-});
-
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
-});
-
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
-  if (backendProcess) {
+if (hasSingleInstanceLock) {
+  app.setAppUserModelId('com.rudra.ai');
+  app.whenReady().then(async () => {
     try {
-      backendProcess.kill();
-    } catch {}
-  }
-});
+      const port = await findAvailablePort(8000);
+      backendConfig = {
+        httpBase: `http://127.0.0.1:${port}`,
+        wsUrl: `ws://127.0.0.1:${port}/ws/voice`,
+        token: randomBytes(32).toString('hex'),
+      };
+    } catch (error) {
+      console.error('[Backend] Could not reserve a local port:', error);
+    }
+    createWindow();
+    createTray();
+    globalShortcut.register('CommandOrControl+Shift+Space', toggleWindow);
+    void startBackend();
+  });
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+
+  app.on('before-quit', () => {
+    isQuitting = true;
+    killBackend();
+  });
+
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
+    killBackend();
+  });
+}

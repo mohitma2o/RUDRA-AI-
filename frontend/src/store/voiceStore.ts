@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 export type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'confirming';
 export type ListeningMode = 'wake' | 'ptt' | 'handsfree';
+export type BackendStatus = 'starting' | 'ready' | 'failed' | 'restarting';
 
 export interface TimingMetrics {
   llm_first_token_ms?: number;
@@ -26,6 +27,8 @@ export interface VoiceStore {
   lang: string;
   timing: TimingMetrics;
   isConnected: boolean;
+  backendStatus: BackendStatus;
+  backendMessage: string;
   audioLevel: number;
   history: HistoryItem[];
   confirmPrompt: { tool: string; args: Record<string, any> } | null;
@@ -43,6 +46,7 @@ export interface VoiceStore {
   setTurnEnd: (turn: number) => void;
   setTiming: (metrics: TimingMetrics) => void;
   setConnected: (connected: boolean) => void;
+  setBackendStatus: (status: BackendStatus, message?: string) => void;
   setAudioLevel: (level: number) => void;
   setConfirmPrompt: (data: { tool: string; args: Record<string, any> } | null) => void;
   updateSettings: (newSettings: Partial<VoiceStore['settings']>) => void;
@@ -58,6 +62,8 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   lang: 'en',
   timing: {},
   isConnected: false,
+  backendStatus: 'starting',
+  backendMessage: '',
   audioLevel: 0,
   history: [],
   confirmPrompt: null,
@@ -114,6 +120,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
     }),
   setTiming: (timing) => set({ timing }),
   setConnected: (isConnected) => set({ isConnected }),
+  setBackendStatus: (backendStatus, backendMessage = '') => set({ backendStatus, backendMessage }),
   setAudioLevel: (audioLevel) => set({ audioLevel }),
   setConfirmPrompt: (confirmPrompt) => set({ confirmPrompt }),
   updateSettings: (newSettings) =>

@@ -10,7 +10,7 @@ import { Settings, Send, X, Minus, Sparkles, Volume2 } from 'lucide-react';
 export const HUD: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const { state, mode } = useVoiceStore();
+  const { state, mode, backendStatus, backendMessage } = useVoiceStore();
   const { interrupt, sendTextQuery, sendConfirmResponse } = useVoicePipeline();
 
   const handleSendText = (e: React.FormEvent) => {
@@ -22,16 +22,16 @@ export const HUD: React.FC = () => {
 
   const handleCloseWindow = () => {
     // If in Electron, call window.electronAPI.hideWindow() or window.close()
-    if ((window as any).electronAPI?.hideWindow) {
-      (window as any).electronAPI.hideWindow();
+    if (window.electronAPI?.hideWindow) {
+      window.electronAPI.hideWindow();
     } else {
       window.close();
     }
   };
 
   const handleMinimizeWindow = () => {
-    if ((window as any).electronAPI?.minimizeWindow) {
-      (window as any).electronAPI.minimizeWindow();
+    if (window.electronAPI?.minimizeWindow) {
+      window.electronAPI.minimizeWindow();
     }
   };
 
@@ -79,6 +79,19 @@ export const HUD: React.FC = () => {
 
       {/* Main Orb Center */}
       <div className="flex flex-col items-center justify-center py-3">
+        {backendStatus !== 'ready' && (
+          <div className="mb-3 text-center text-xs text-amber-300" role="status">
+            {backendStatus === 'failed' ? (backendMessage || 'Rudra could not start.') : 'Starting Rudra...'}
+            {backendStatus === 'failed' && window.electronAPI?.openBackendLog && (
+              <button
+                onClick={() => void window.electronAPI?.openBackendLog()}
+                className="ml-2 underline"
+              >
+                View log
+              </button>
+            )}
+          </div>
+        )}
         <Orb onOrbClick={interrupt} />
       </div>
 

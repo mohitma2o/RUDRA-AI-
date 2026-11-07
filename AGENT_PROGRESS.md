@@ -25,3 +25,21 @@
   remain in the relevant files.
 - Not yet verified: the complete interactive `npm run dev` launch and the
   fresh-clone installation acceptance test.
+
+## WP-A2 — Electron lifecycle and backend launcher
+
+- Added single-instance behavior, safe external navigation handling, sandboxed
+  renderer settings, app identity, Start with Windows tray setting, and
+  packaged/dev resource paths.
+- Reworked backend startup to use `shell: false`, a loopback port, per-launch
+  token, user-data directory, health polling, backend log,
+  failure/restart status, and Windows process-tree termination on quit.
+- Exposed backend config/status/log IPC through the preload bridge; the HUD now
+  reports startup/failure state and offers a log action. Added a renderer CSP.
+- Verified `npm run build`, `python -m pytest tests -q` (66 passed), and a live
+  `npm run dev` smoke test: Vite, Electron, and FastAPI started and `/health`
+  returned HTTP 200. Confirmed the backend endpoint was unavailable after
+  stopping the smoke-test process tree.
+- Not yet verified: packaged runtime resource paths, clean-machine installer,
+  Windows startup setting, process-tree behavior in a packaged release, or
+  runtime CSP/navigation behavior in a visual UI test.

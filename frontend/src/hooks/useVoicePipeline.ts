@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useVoiceStore } from '../store/voiceStore';
 
-const WS_URL = 'ws://127.0.0.1:8000/ws/voice';
+const FALLBACK_WS_URL = 'ws://127.0.0.1:8000/ws/voice';
 const SAMPLE_RATE = 16000;
 const VAD_THRESHOLD = 0.025; // Energy threshold to trigger speech
 const SILENCE_MS = 450;      // Silence trailing endpoint (ms)
@@ -107,9 +107,12 @@ export function useVoicePipeline() {
   // Connect WebSocket
   useEffect(() => {
     let reconnectTimeout: number;
+    let active = true;
+    let wsUrl = FALLBACK_WS_URL;
 
     const connect = () => {
-      const ws = new WebSocket(WS_URL);
+      if (!active) return;
+      const ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 
@@ -123,7 +126,7 @@ export function useVoicePipeline() {
 
       ws.onclose = () => {
         store.setConnected(false);
-        reconnectTimeout = window.setTimeout(connect, 2000);
+        if (active) reconnectTimeout = window.setTimeout(connect, 2000);
       };
 
       ws.onerror = (e) => {
@@ -166,9 +169,19 @@ export function useVoicePipeline() {
       };
     };
 
-    connect();
+    void window.electronAPI?.getBackendConfig()
+      .then((config) => {
+        if (config?.wsUrl) wsUrl = config.wsUrl;
+        connect();
+      })
+      .catch((error: unknown) => {
+        console.error('Could not get backend connection settings:', error);
+        connect();
+      });
+    if (!window.electronAPI) connect();
 
     return () => {
+      active = false;
       clearTimeout(reconnectTimeout);
       if (wsRef.current) wsRef.current.close();
     };
