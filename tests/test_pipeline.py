@@ -111,3 +111,34 @@ class TestFastPath:
         assert match_fast_path("turn off the pc") == ("shutdown", {"delay_seconds": 30})
         assert match_fast_path("cancel shutdown") == ("cancel_shutdown", {})
         assert match_fast_path("what is quantum computing") is None  # Goes to LLM
+
+    def test_fast_path_requires_a_complete_command(self):
+        from backend.app.main import match_fast_path
+
+        for text in (
+            "display my notes",
+            "screenshots are great",
+            "replay",
+            "what time is it tomorrow",
+            "please set volume to 75",
+            "I need a system status report",
+        ):
+            assert match_fast_path(text) is None
+
+    def test_fast_path_accepts_command_punctuation(self):
+        from backend.app.main import match_fast_path
+
+        assert match_fast_path("screenshot!") == ("screenshot", {})
+        assert match_fast_path("play shiva tandav on youtube.") == (
+            "play_youtube",
+            {"query": "shiva tandav"},
+        )
+
+
+def test_stt_model_size_is_unchanged_without_reload(monkeypatch):
+    from backend.app.voice import stt
+
+    loaded_model = object()
+    monkeypatch.setattr(stt, "_model", loaded_model)
+    stt.set_model_size(stt._model_size)
+    assert stt._model is loaded_model

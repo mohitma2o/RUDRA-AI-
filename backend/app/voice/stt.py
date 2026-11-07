@@ -21,8 +21,11 @@ _model_size = "base"
 
 def set_model_size(size: str) -> None:
     global _model_size, _model
-    _model_size = size
-    _model = None  # trigger reload on next call
+    with _model_lock:
+        if size == _model_size:
+            return
+        _model_size = size
+        _model = None  # trigger reload on next call
 
 
 def _load_model() -> object:

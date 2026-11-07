@@ -8,12 +8,13 @@ Spawned by the Electron main process; run directly with:
 import asyncio
 import json
 import os
+import re
 import secrets
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 import uvicorn
@@ -65,7 +66,10 @@ async def _startup() -> None:
         try:
             import httpx
             config = _load_config()
-            model = config.get("ollama_model", "qwen2.5:1.5b")
+            model = config.get(
+                "ollama_voice_model",
+                config.get("ollama_model", "qwen2.5:1.5b"),
+            )
             payload = {
                 "model": model,
                 "stream": False,
@@ -179,6 +183,7 @@ def _load_config() -> dict:
     default_path = resource_dir() / "rudra" / "config.json"
     user_path = data_dir() / "config.json"
     config: dict = {}
+    user_config: dict = {}
 
     for config_path in (default_path, user_path):
         if not config_path.is_file():
@@ -190,6 +195,11 @@ def _load_config() -> dict:
         if not isinstance(loaded, dict):
             raise RuntimeError(f"Configuration at {config_path} must contain a JSON object.")
         config.update(loaded)
+        if config_path == user_path:
+            user_config = loaded
+
+    if "ollama_voice_model" not in user_config and "ollama_model" in user_config:
+        config["ollama_voice_model"] = user_config["ollama_model"]
     return config
 
 
@@ -197,57 +207,116 @@ def _load_config() -> dict:
 # Fast-path intent matching
 # ---------------------------------------------------------------------------
 
+def _empty_args(_: re.Match) -> dict:
+    return {}
+
+
+FAST_PATH_RULES: list[tuple[re.Pattern, str, Callable[[re.Match], dict]]] = [
+    (
+        re.compile(
+            r"(?:what time is it|what(?:'s| is) the time|current time|"
+            r"tell me the time|what date|what is today's date)[.!?]?"
+        ),
+        "get_time",
+        _empty_args,
+    ),
+    (
+        re.compile(
+            r"(?:system status|battery status|cpu usage|ram usage|"
+            r"system stats|battery level)[.!?]?"
+        ),
+        "system_status",
+        _empty_args,
+    ),
+    (
+        re.compile(r"(?:take (?:a )?screenshot|capture (?:my )?screen|screenshot)[.!?]?"),
+        "screenshot",
+        _empty_args,
+    ),
+    (
+        re.compile(r"(?:lock screen|lock my screen|lock the screen|lock my pc|lock computer)[.!?]?"),
+        "lock_screen",
+        _empty_args,
+    ),
+    (
+        re.compile(r"(?:mute|unmute|toggle mute|mute audio|unmute audio)[.!?]?"),
+        "volume_mute",
+        _empty_args,
+    ),
+    (
+        re.compile(r"(?:pause music|pause video|play pause|pause media)[.!?]?"),
+        "media_control",
+        lambda _: {"action": "play_pause"},
+    ),
+    (
+        re.compile(r"(?:next track|next song|skip song)[.!?]?"),
+        "media_control",
+        lambda _: {"action": "next"},
+    ),
+    (
+        re.compile(r"(?:previous track|previous song)[.!?]?"),
+        "media_control",
+        lambda _: {"action": "prev"},
+    ),
+    (
+        re.compile(r"(?:set )?volume (?:to )?(\d+)[.!?]?"),
+        "volume_set",
+        lambda m: {"level": int(m.group(1))},
+    ),
+    (
+        re.compile(r"(?:set )?brightness (?:to )?(\d+)[.!?]?"),
+        "brightness_set",
+        lambda m: {"level": int(m.group(1))},
+    ),
+    (
+        re.compile(r"(?:brightness up|increase brightness)[.!?]?"),
+        "brightness_up",
+        _empty_args,
+    ),
+    (
+        re.compile(r"(?:brightness down|decrease brightness|dim screen)[.!?]?"),
+        "brightness_down",
+        _empty_args,
+    ),
+    (
+        re.compile(r"(?:cancel shutdown|cancel restart|abort shutdown)[.!?]?"),
+        "cancel_shutdown",
+        _empty_args,
+    ),
+    (
+        re.compile(
+            r"(?:shutdown computer|shut down computer|turn off the pc|turn off computer)[.!?]?"
+        ),
+        "shutdown",
+        lambda _: {"delay_seconds": 30},
+    ),
+    (
+        re.compile(
+            r"(?:restart computer|reboot computer|reboot the pc|restart the pc)[.!?]?"
+        ),
+        "restart",
+        lambda _: {"delay_seconds": 30},
+    ),
+    (
+        re.compile(r"(?:sleep computer|put computer to sleep|sleep pc)[.!?]?"),
+        "sleep",
+        _empty_args,
+    ),
+    (
+        re.compile(r"play\s+(.+?)(?:\s+on youtube)?[.!?]?"),
+        "play_youtube",
+        lambda m: {"query": m.group(1).strip(" .!?")},
+    ),
+]
+
+
 def match_fast_path(raw: str) -> Optional[tuple[str, dict]]:
     """Match common voice commands to instant tools without hitting the LLM."""
     text = raw.lower().strip()
-    import re
-    # Time / Date
-    if any(p in text for p in ("what time", "current time", "what is the time", "tell me the time", "what date", "what is today's date")):
-        return ("get_time", {})
-    # System status
-    if any(p in text for p in ("system status", "battery status", "cpu usage", "ram usage", "system stats", "battery level")):
-        return ("system_status", {})
-    # Screenshot
-    if any(p in text for p in ("take a screenshot", "take screenshot", "capture screen", "screenshot")):
-        return ("screenshot", {})
-    # Lock screen
-    if any(p in text for p in ("lock screen", "lock my screen", "lock the screen", "lock my pc", "lock computer")):
-        return ("lock_screen", {})
-    # Mute / Unmute
-    if text in ("mute", "unmute", "toggle mute", "mute audio", "unmute audio"):
-        return ("volume_mute", {})
-    # Media controls
-    if any(p in text for p in ("pause music", "pause video", "play pause", "pause media")):
-        return ("media_control", {"action": "play_pause"})
-    if any(p in text for p in ("next track", "next song", "skip song")):
-        return ("media_control", {"action": "next"})
-    if any(p in text for p in ("previous track", "previous song")):
-        return ("media_control", {"action": "prev"})
-    # Volume control
-    m_vol = re.search(r"(?:set )?volume (?:to )?(\d+)", text)
-    if m_vol:
-        return ("volume_set", {"level": int(m_vol.group(1))})
-    # Brightness control
-    m_bri = re.search(r"(?:set )?brightness (?:to )?(\d+)", text)
-    if m_bri:
-        return ("brightness_set", {"level": int(m_bri.group(1))})
-    if "brightness up" in text or "increase brightness" in text:
-        return ("brightness_up", {})
-    if "brightness down" in text or "decrease brightness" in text or "dim screen" in text:
-        return ("brightness_down", {})
-    # YouTube play
-    m_yt = re.search(r"play (.+?)(?: on youtube|$)", text)
-    if m_yt:
-        return ("play_youtube", {"query": m_yt.group(1).strip()})
-    # Power controls (CONFIRM tier)
-    if any(p in text for p in ("shutdown computer", "shut down computer", "turn off the pc", "turn off computer")):
-        return ("shutdown", {"delay_seconds": 30})
-    if any(p in text for p in ("restart computer", "reboot computer", "reboot the pc", "restart the pc")):
-        return ("restart", {"delay_seconds": 30})
-    if any(p in text for p in ("sleep computer", "put computer to sleep", "sleep pc")):
-        return ("sleep", {})
-    if any(p in text for p in ("cancel shutdown", "cancel restart", "abort shutdown")):
-        return ("cancel_shutdown", {})
+    for pattern, tool, arg_builder in FAST_PATH_RULES:
+        match = pattern.fullmatch(text)
+        if match:
+            return tool, arg_builder(match)
     return None
 
 
@@ -380,8 +449,11 @@ class Session:
         )
 
         async def _on_done(t: asyncio.Task) -> None:
-            if t.exception():
-                await self.send_json({"type": "error", "message": str(t.exception())})
+            if t.cancelled() or self.task is not t:
+                return
+            error = t.exception()
+            if error:
+                await self.send_json({"type": "error", "message": str(error)})
             await self.send_json({"type": "state", "state": "idle"})
 
         self.task.add_done_callback(lambda t: asyncio.ensure_future(_on_done(t)))
@@ -469,7 +541,7 @@ class Session:
             persisted["stt_model"] = cfg["stt_model"]
         if "llm_model" in cfg:
             self.model = cfg["llm_model"]
-            persisted["ollama_model"] = cfg["llm_model"]
+            persisted["ollama_voice_model"] = cfg["llm_model"]
         if persisted:
             save_user_config(persisted)
 

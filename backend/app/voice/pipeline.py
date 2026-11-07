@@ -109,6 +109,8 @@ async def llm_sentences(
     history: list[dict],
     model: str,
     sentence_queue: asyncio.Queue,
+    timing: Optional[dict] = None,
+    started_at: Optional[float] = None,
 ) -> None:
     """Stream Ollama, split into sentences, push each into the queue. Ends with None."""
     payload = {
@@ -137,6 +139,11 @@ async def llm_sentences(
                     except json.JSONDecodeError:
                         continue
                     token = chunk.get("message", {}).get("content", "")
+                    if token and timing is not None and started_at is not None:
+                        timing.setdefault(
+                            "llm_first_token_ms",
+                            int((time.monotonic() - started_at) * 1000),
+                        )
                     buf += token
                     # Split on sentence boundary
                     if SENT_END.search(buf):
@@ -171,20 +178,15 @@ async def run_turn(
     t_start = time.monotonic()
     timing = {}
 
-    producer = asyncio.create_task(llm_sentences(history, model, q))
+    producer = asyncio.create_task(llm_sentences(history, model, q, timing, t_start))
     full_reply = []
 
     try:
         seq = 0
-        first_sentence = True
         while True:
             sentence = await q.get()
             if sentence is None:
                 break
-
-            if first_sentence:
-                timing["llm_first_token_ms"] = int((time.monotonic() - t_start) * 1000)
-                first_sentence = False
 
             lang = script_lang(sentence, user_lang)
             voice = voice_override or VOICES.get(lang, VOICES["en"])
@@ -203,7 +205,6 @@ async def run_turn(
             audio_data, mime = await synth(sentence, voice, lang)
             if seq == 0:
                 timing["tts_first_audio_ms"] = int((time.monotonic() - t_tts) * 1000)
-                timing["total_ms"] = int((time.monotonic() - t_start) * 1000)
 
             if audio_data:
                 async with _lock:
@@ -217,6 +218,15 @@ async def run_turn(
                     await send_bytes(audio_data)
 
             seq += 1
+
+        timing["total_ms"] = int((time.monotonic() - t_start) * 1000)
+        print(
+            "[Metrics] Voice turn "
+            f"model={model} "
+            f"llm_first_token_ms={timing.get('llm_first_token_ms')} "
+            f"tts_first_audio_ms={timing.get('tts_first_audio_ms')} "
+            f"total_ms={timing['total_ms']}"
+        )
 
         async with _lock:
             await send_json({"type": "turn_end", "turn": turn})

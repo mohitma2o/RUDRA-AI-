@@ -115,3 +115,25 @@
 - Not yet verified: microphone permission/audio on physical Windows hardware,
   actual sequential audio playback, adaptive VAD behavior in noisy rooms, or
   voice barge-in latency.
+
+## WP-B2 — Voice backend reliability and model selection
+
+- Made fast-path matching anchored and table-driven so incidental words such
+  as "screenshots" or "replay" no longer trigger tools. Added regression tests
+  for false positives, punctuation, and existing command forms.
+- Avoided reloading the Whisper model when its configured size is unchanged;
+  guarded cancelled and superseded voice-turn callbacks from reporting stale
+  idle states or reading an exception from a cancelled task.
+- Added separate `ollama_voice_model` and `ollama_doc_model` settings. Startup
+  and setup status now use only the voice model, and legacy per-user
+  `ollama_model` overrides migrate to the voice-model setting. The document
+  model remains reserved for the document workflow, which is not implemented
+  yet.
+- Corrected timing measurements to capture the first streamed LLM token and
+  full-turn duration, emit timing events, and print latency metrics to the
+  backend log.
+- Verified `python -m pytest tests -q` (75 passed, 16 subtests) and editor
+  diagnostics for the changed Python files. Two existing FastAPI lifecycle
+  deprecation warnings remain.
+- Not yet verified: live Ollama voice-model warm-up, document summarization
+  model loading, or latency measurements against a running Ollama/TTS stack.
