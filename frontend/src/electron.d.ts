@@ -13,6 +13,7 @@ declare global {
         token: string;
       } | null>;
       openBackendLog: () => Promise<void>;
+      openExternal: (url: string) => Promise<void>;
       onHotkeyTrigger: (callback: () => void) => () => void;
       onBackendStatus: (
         callback: (event: { status: string; message?: string }) => void

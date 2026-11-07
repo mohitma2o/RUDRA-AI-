@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVersion: () => ipcRenderer.invoke('get-version'),
   getBackendConfig: () => ipcRenderer.invoke('get-backend-config'),
   openBackendLog: () => ipcRenderer.invoke('open-backend-log'),
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onHotkeyTrigger: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on('hotkey-trigger', listener);

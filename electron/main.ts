@@ -333,6 +333,10 @@ ipcMain.handle('get-backend-config', () => backendConfig);
 ipcMain.handle('open-backend-log', () => {
   if (backendLogPath) void shell.openPath(backendLogPath);
 });
+ipcMain.handle('open-external', (_event, url: unknown) => {
+  if (typeof url !== 'string') throw new TypeError('Expected an external URL string.');
+  openExternalUrl(url);
+});
 
 if (hasSingleInstanceLock) {
   app.setAppUserModelId('com.rudra.ai');

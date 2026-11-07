@@ -77,3 +77,22 @@
   requires the Whisper model download and frozen backend build. The full npm
   audit currently reports 8 development-toolchain advisories (6 moderate,
   2 high); no `npm audit fix` was applied.
+
+## WP-A5 — First-run Ollama setup
+
+- Added authenticated `/api/setup/status` and model-pull SSE endpoints. Status
+  reports Ollama availability, installed/required models, STT readiness, and
+  online TTS connectivity.
+- Added a non-blocking HUD setup notice with Ollama download link, recheck,
+  model download progress, and explicit error reporting. Setup calls use the
+  per-launch bearer token.
+- Changed `npm run dev` to start only Vite and Electron; Electron owns backend
+  startup, avoiding a duplicate Python server and port conflict.
+- Verified `npm run build`, `python -m pytest tests -q` (70 passed), and a live
+  dev smoke test: `/health` returned HTTP 200, setup status without a token
+  returned HTTP 401, and the backend stopped after the test process tree was
+  terminated.
+- Not yet verified: Ollama installation/model download progress against a live
+  Ollama server, production `file://` CORS origin behavior, or live TTS network
+  status. The `null` file-origin CORS entry remains to be validated and
+  tightened in WP-D1.

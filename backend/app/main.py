@@ -8,14 +8,18 @@ Spawned by the Electron main process; run directly with:
 import asyncio
 import json
 import os
+import secrets
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 # Ensure both backend/ and repo root are in sys.path
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -34,6 +38,18 @@ from .paths import resource_dir, data_dir, save_user_config
 from app.tools.registry import REGISTRY, execute, Tier
 
 app = FastAPI(title="RUDRA AI Backend")
+_API_TOKEN = os.environ.get("RUDRA_TOKEN")
+if not _API_TOKEN:
+    _API_TOKEN = secrets.token_urlsafe(32)
+    print(f"[Security] Standalone backend token: {_API_TOKEN}")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "null"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 # ---------------------------------------------------------------------------
 # Startup: warm up models
@@ -69,6 +85,90 @@ async def _startup() -> None:
 @app.get("/health")
 async def health():
     return {"status": "ok", "timestamp": time.time()}
+
+
+def _required_model() -> str:
+    config = _load_config()
+    return config.get("ollama_voice_model", config.get("ollama_model", "qwen2.5:1.5b"))
+
+
+def _require_api_token(authorization: Optional[str] = Header(default=None)) -> None:
+    expected = f"Bearer {_API_TOKEN}"
+    if not authorization or not secrets.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="A valid local API token is required.")
+
+
+@app.get("/api/setup/status")
+async def setup_status(_: None = Depends(_require_api_token)):
+    required_model = _required_model()
+    ollama_running = False
+    installed_models: list[str] = []
+    ollama_error: Optional[str] = None
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            response = await client.get("http://127.0.0.1:11434/api/tags")
+            response.raise_for_status()
+            ollama_running = True
+            installed_models = [
+                str(model.get("name", ""))
+                for model in response.json().get("models", [])
+                if model.get("name")
+            ]
+    except httpx.RequestError as exc:
+        ollama_error = f"Ollama is not reachable: {exc}"
+    except httpx.HTTPStatusError as exc:
+        ollama_running = True
+        ollama_error = f"Ollama returned HTTP {exc.response.status_code}."
+    except (ValueError, AttributeError) as exc:
+        ollama_running = True
+        ollama_error = f"Ollama returned an invalid model list: {exc}"
+
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            tts_response = await client.get("https://speech.platform.bing.com")
+            tts_online = tts_response.status_code < 500
+    except httpx.RequestError:
+        tts_online = False
+
+    bundled_stt = resource_dir() / "backend" / "models" / "whisper-base"
+    return {
+        "ollama_running": ollama_running,
+        "models_installed": installed_models,
+        "required_model": required_model,
+        "stt_ready": bool(getattr(stt_module, "_model", None)) or bundled_stt.is_dir(),
+        "tts_online": tts_online,
+        "error": ollama_error,
+    }
+
+
+@app.post("/api/setup/pull-model")
+async def pull_setup_model(_: None = Depends(_require_api_token)):
+    required_model = _required_model()
+
+    async def progress_stream():
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "POST",
+                    "http://127.0.0.1:11434/api/pull",
+                    json={"name": required_model, "stream": True},
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if line:
+                            yield f"data: {line}\n\n"
+        except httpx.HTTPStatusError as exc:
+            error = json.dumps({"error": f"Ollama returned HTTP {exc.response.status_code}."})
+            yield f"data: {error}\n\n"
+        except httpx.RequestError as exc:
+            error = json.dumps({"error": f"Could not download the model: {exc}"})
+            yield f"data: {error}\n\n"
+
+    return StreamingResponse(
+        progress_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 # ---------------------------------------------------------------------------

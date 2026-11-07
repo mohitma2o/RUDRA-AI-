@@ -3,6 +3,7 @@ import { Orb } from './Orb';
 import { Transcript } from './Transcript';
 import { Metrics } from './Metrics';
 import { SettingsModal } from './SettingsModal';
+import { SetupNotice } from './SetupNotice';
 import { useVoicePipeline } from '../hooks/useVoicePipeline';
 import { useVoiceStore } from '../store/voiceStore';
 import { Settings, Send, X, Minus, Sparkles, Volume2 } from 'lucide-react';
@@ -97,6 +98,7 @@ export const HUD: React.FC = () => {
 
       {/* Live Transcript & Conversation Box */}
       <Transcript onConfirm={sendConfirmResponse} />
+      <SetupNotice />
 
       {/* Text Command Input Bar */}
       <form onSubmit={handleSendText} className="relative mt-2" data-no-drag>
