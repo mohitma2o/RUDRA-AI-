@@ -12,11 +12,49 @@
     "build:electron": "tsc -p electron/tsconfig.json",
     "build:backend": "python backend/scripts/download_whisper.py && python -m PyInstaller backend/rudra-backend.spec --noconfirm --distpath backend/dist --workpath backend/build",
     "build": "npm run build:frontend && npm run build:electron",
+    "dist": "npm run build && npm run build:backend && electron-builder --win",
     "start": "electron ."
+  },
+  "build": {
+    "appId": "com.rudra.ai",
+    "productName": "Rudra AI",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/electron/**/*",
+      "frontend/dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/dist/rudra-backend",
+        "to": "backend"
+      },
+      {
+        "from": "rudra/tray_icon.ico",
+        "to": "tray_icon.ico"
+      },
+      {
+        "from": "rudra/config.json",
+        "to": "config.default.json"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "rudra/tray_icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
     "electron": "^33.2.0",
+    "electron-builder": "26.18.0",
     "typescript": "^5.7.0",
     "wait-on": "^8.0.1"
   }

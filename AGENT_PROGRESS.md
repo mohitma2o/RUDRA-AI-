@@ -61,3 +61,19 @@
   Whisper weights, PyInstaller execution, frozen one-folder startup, or the
   resulting executable size. The model download/build was not run because it
   requires network access and produces a large model bundle.
+
+## WP-A4 — Windows installer foundations
+
+- Added the pinned `electron-builder` 26.18.0 dependency and NSIS configuration,
+  including the requested app ID, product name, `release/` output, resources,
+  icon, and installer directory options. Added the `dist` script.
+- Replaced Google Fonts links with pinned local Outfit and JetBrains Mono
+  packages; the production build now emits local font assets.
+- Verified `npm run build`, `npx electron-builder --version` (26.18.0), and
+  `npm audit --omit=dev` (no production dependency advisories).
+- npm reports Node-engine warnings for transitive `@electron/rebuild` and
+  `node-abi` requiring Node 22.12+ while the current environment is Node 20.18;
+  the builder CLI itself runs. Full NSIS output is not yet verified because it
+  requires the Whisper model download and frozen backend build. The full npm
+  audit currently reports 8 development-toolchain advisories (6 moderate,
+  2 high); no `npm audit fix` was applied.
