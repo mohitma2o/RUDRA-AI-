@@ -96,3 +96,22 @@
   Ollama server, production `file://` CORS origin behavior, or live TTS network
   status. The `null` file-origin CORS entry remains to be validated and
   tightened in WP-D1.
+
+## WP-B1 — Voice client reliability
+
+- Replaced `ScriptProcessorNode` with an `AudioWorklet` capture path and
+  separate capture/playback audio contexts. The processor is copied to the
+  production frontend root and served from the same origin.
+- Reworked the voice hook to avoid whole-store subscriptions, use stable
+  effects, apply configuration changes immediately, keep a 300 ms pre-roll,
+  estimate an adaptive noise floor, ignore speech shorter than 250 ms, cap
+  utterances at 15 seconds, and endpoint after 450 ms of silence.
+- Added FIFO TTS playback; barge-in clears queued audio and interrupts the
+  backend. Playback state is local and is not overwritten by an early server
+  `idle` event.
+- Verified `npm run build`; confirmed `frontend/dist/capture-worklet.js` is
+  emitted. Python regression suite was green immediately before the final
+  frontend-only adjustments (70 passed).
+- Not yet verified: microphone permission/audio on physical Windows hardware,
+  actual sequential audio playback, adaptive VAD behavior in noisy rooms, or
+  voice barge-in latency.

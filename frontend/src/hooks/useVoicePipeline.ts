@@ -1,301 +1,265 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { AudioCapture } from '../audio/capture';
+import { AudioPlayer } from '../audio/player';
+import { createVoiceSocket } from '../net/socket';
 import { useVoiceStore } from '../store/voiceStore';
 
 const FALLBACK_WS_URL = 'ws://127.0.0.1:8000/ws/voice';
 const SAMPLE_RATE = 16000;
-const VAD_THRESHOLD = 0.025; // Energy threshold to trigger speech
-const SILENCE_MS = 450;      // Silence trailing endpoint (ms)
+const PRE_ROLL_SAMPLES = Math.round(SAMPLE_RATE * 0.3);
+const MIN_SPEECH_SAMPLES = Math.round(SAMPLE_RATE * 0.25);
+const MAX_SPEECH_SAMPLES = SAMPLE_RATE * 15;
+const SILENCE_SAMPLES = Math.round(SAMPLE_RATE * 0.45);
 
 export function useVoicePipeline() {
-  const store = useVoiceStore();
   const wsRef = useRef<WebSocket | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const audioQueueRef = useRef<{ source: AudioBufferSourceNode; onEnded: () => void } | null>(null);
-  const isSpeakingRef = useRef<boolean>(false);
+  const captureRef = useRef<AudioCapture | null>(null);
+  const playerRef = useRef<AudioPlayer | null>(null);
   const speechFramesRef = useRef<Float32Array[]>([]);
-  const silenceTimerRef = useRef<number | null>(null);
-  const lastStateRef = useRef<string>('idle');
+  const preRollFramesRef = useRef<Float32Array[]>([]);
+  const preRollSamplesRef = useRef(0);
+  const speechSamplesRef = useRef(0);
+  const silenceSamplesRef = useRef(0);
+  const noiseFloorRef = useRef(0.005);
+  const isCollectingSpeechRef = useRef(false);
 
-  // Stop currently playing TTS audio (barge-in)
-  const stopAudio = useCallback(() => {
-    if (audioQueueRef.current) {
-      try {
-        audioQueueRef.current.source.stop();
-      } catch {}
-      audioQueueRef.current = null;
-    }
+  if (!playerRef.current) {
+    playerRef.current = new AudioPlayer(
+      (speaking) => {
+        const store = useVoiceStore.getState();
+        if (speaking) store.setState('speaking');
+        else if (store.state === 'speaking') store.setState('idle');
+      },
+      (error) => console.error('Audio playback error:', error),
+    );
+  }
+  const player = playerRef.current;
+
+  const clearUtterance = useCallback(() => {
+    speechFramesRef.current = [];
+    speechSamplesRef.current = 0;
+    silenceSamplesRef.current = 0;
+    isCollectingSpeechRef.current = false;
   }, []);
 
-  // Send an interrupt signal to the backend and kill current playback
-  const interrupt = useCallback(() => {
-    stopAudio();
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'interrupt' }));
-    }
-    store.setState('idle');
-  }, [stopAudio, store]);
-
-  // Play incoming audio buffer
-  const playAudioChunk = useCallback(
-    async (blobData: ArrayBuffer) => {
-      stopAudio();
-      try {
-        if (!audioCtxRef.current) {
-          audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        }
-        const ctx = audioCtxRef.current;
-        if (ctx.state === 'suspended') {
-          await ctx.resume();
-        }
-
-        const audioBuf = await ctx.decodeAudioData(blobData.slice(0));
-        const source = ctx.createBufferSource();
-        source.buffer = audioBuf;
-        source.connect(ctx.destination);
-
-        store.setState('speaking');
-
-        source.onended = () => {
-          if (audioQueueRef.current?.source === source) {
-            audioQueueRef.current = null;
-            store.setState('idle');
-          }
-        };
-
-        source.start(0);
-        audioQueueRef.current = {
-          source,
-          onEnded: () => store.setState('idle'),
-        };
-      } catch (err) {
-        console.error('Audio playback error:', err);
-        store.setState('idle');
-      }
-    },
-    [stopAudio, store]
-  );
-
-  // Send collected PCM frames as 16kHz 16-bit mono
   const flushUtterance = useCallback(() => {
-    if (speechFramesRef.current.length === 0) return;
+    const frames = speechFramesRef.current;
+    const speechSamples = speechSamplesRef.current;
+    clearUtterance();
+    if (speechSamples < MIN_SPEECH_SAMPLES || frames.length === 0) {
+      const store = useVoiceStore.getState();
+      if (store.state === 'listening') store.setState('idle');
+      return;
+    }
 
-    // Concat Float32 frames
-    const totalLength = speechFramesRef.current.reduce((acc, f) => acc + f.length, 0);
+    const totalLength = frames.reduce((total, frame) => total + frame.length, 0);
     const merged = new Float32Array(totalLength);
     let offset = 0;
-    for (const frame of speechFramesRef.current) {
+    for (const frame of frames) {
       merged.set(frame, offset);
       offset += frame.length;
     }
-    speechFramesRef.current = [];
 
-    // Convert Float32 [-1.0, 1.0] to Int16 PCM
     const pcm16 = new Int16Array(merged.length);
-    for (let i = 0; i < merged.length; i++) {
-      const s = Math.max(-1, Math.min(1, merged[i]));
-      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    for (let index = 0; index < merged.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, merged[index]));
+      pcm16[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
     }
 
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      // Send utterance metadata frame followed by binary PCM frame
-      wsRef.current.send(JSON.stringify({ type: 'utterance', mode: store.mode }));
-      wsRef.current.send(pcm16.buffer);
+    const socket = wsRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'utterance', mode: useVoiceStore.getState().mode }));
+      socket.send(pcm16.buffer);
     }
-  }, [store.mode]);
+  }, [clearUtterance]);
 
-  // Connect WebSocket
+  const interrupt = useCallback(() => {
+    player.stop();
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'interrupt' }));
+    }
+    useVoiceStore.getState().setState('idle');
+  }, [player]);
+
   useEffect(() => {
-    let reconnectTimeout: number;
     let active = true;
+    let reconnectTimeout: number | undefined;
     let wsUrl = FALLBACK_WS_URL;
+    let token = '';
+    let socket: WebSocket | null = null;
+
+    const sendSettings = () => {
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'config', ...useVoiceStore.getState().settings }));
+      }
+    };
 
     const connect = () => {
       if (!active) return;
-      const ws = new WebSocket(wsUrl);
-      ws.binaryType = 'arraybuffer';
-      wsRef.current = ws;
-
+      socket = createVoiceSocket(wsUrl, token);
+      wsRef.current = socket;
       let pendingAudioMeta: { turn: number; seq: number; lang: string } | null = null;
 
-      ws.onopen = () => {
-        store.setConnected(true);
-        // Send initial settings
-        ws.send(JSON.stringify({ type: 'config', ...store.settings }));
+      socket.onopen = () => {
+        useVoiceStore.getState().setConnected(true);
+        sendSettings();
       };
-
-      ws.onclose = () => {
-        store.setConnected(false);
+      socket.onclose = () => {
+        if (wsRef.current === socket) wsRef.current = null;
+        useVoiceStore.getState().setConnected(false);
         if (active) reconnectTimeout = window.setTimeout(connect, 2000);
       };
-
-      ws.onerror = (e) => {
-        console.warn('WS error', e);
-      };
-
-      ws.onmessage = async (e) => {
-        if (typeof e.data === 'string') {
-          const msg = JSON.parse(e.data);
-          switch (msg.type) {
+      socket.onerror = (event) => console.warn('WebSocket error', event);
+      socket.onmessage = (event) => {
+        if (typeof event.data === 'string') {
+          const message = JSON.parse(event.data);
+          const store = useVoiceStore.getState();
+          switch (message.type) {
             case 'state':
-              lastStateRef.current = msg.state;
-              store.setState(msg.state);
+              if (!player.isSpeaking) store.setState(message.state);
               break;
             case 'transcript':
-              store.setTranscript(msg.text, msg.lang);
+              store.setTranscript(message.text, message.lang);
               break;
             case 'reply_delta':
-              store.appendReply(msg.turn, msg.text);
+              store.appendReply(message.turn, message.text);
               break;
             case 'turn_end':
-              store.setTurnEnd(msg.turn);
+              store.setTurnEnd(message.turn);
               break;
             case 'timing':
-              store.setTiming(msg);
+              store.setTiming(message);
               break;
             case 'audio':
-              pendingAudioMeta = msg;
+              pendingAudioMeta = message;
               break;
             case 'confirm':
-              store.setConfirmPrompt({ tool: msg.tool, args: msg.args });
+              store.setConfirmPrompt({ tool: message.tool, args: message.args });
               break;
             default:
               break;
           }
-        } else if (e.data instanceof ArrayBuffer && pendingAudioMeta) {
-          await playAudioChunk(e.data);
+        } else if (event.data instanceof ArrayBuffer && pendingAudioMeta) {
+          player.enqueue(event.data);
           pendingAudioMeta = null;
         }
       };
     };
 
-    void window.electronAPI?.getBackendConfig()
-      .then((config) => {
-        if (config?.wsUrl) wsUrl = config.wsUrl;
-        connect();
-      })
-      .catch((error: unknown) => {
-        console.error('Could not get backend connection settings:', error);
-        connect();
-      });
-    if (!window.electronAPI) connect();
+    const unsubscribeSettings = useVoiceStore.subscribe((state, previousState) => {
+      if (state.settings !== previousState.settings) sendSettings();
+    });
 
-    return () => {
-      active = false;
-      clearTimeout(reconnectTimeout);
-      if (wsRef.current) wsRef.current.close();
-    };
-  }, [playAudioChunk, store]);
-
-  // Microphone Setup with VAD
-  useEffect(() => {
-    let active = true;
-
-    async function initMic() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            sampleRate: SAMPLE_RATE,
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
+    if (window.electronAPI) {
+      void window.electronAPI.getBackendConfig()
+        .then((config) => {
+          if (config?.wsUrl) wsUrl = config.wsUrl;
+          if (config?.token) token = config.token;
+          connect();
+        })
+        .catch((error: unknown) => {
+          console.error('Could not get backend connection settings:', error);
+          connect();
         });
-
-        if (!active) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-
-        micStreamRef.current = stream;
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({
-          sampleRate: SAMPLE_RATE,
-        });
-        audioCtxRef.current = ctx;
-
-        const source = ctx.createMediaStreamSource(stream);
-        // Process in 2048 sample chunks
-        const processor = ctx.createScriptProcessor(2048, 1, 1);
-
-        processor.onaudioprocess = (e) => {
-          const input = e.inputBuffer.getChannelData(0);
-
-          // Calculate RMS energy
-          let sumSquares = 0;
-          for (let i = 0; i < input.length; i++) {
-            sumSquares += input[i] * input[i];
-          }
-          const rms = Math.sqrt(sumSquares / input.length);
-          const level = Math.min(100, Math.round(rms * 400));
-          store.setAudioLevel(level);
-
-          // Barge-in check: if assistant is speaking and user speaks loudly, interrupt!
-          if (rms > VAD_THRESHOLD * 1.5 && lastStateRef.current === 'speaking') {
-            interrupt();
-          }
-
-          if (rms > VAD_THRESHOLD) {
-            // Speech detected
-            if (!isSpeakingRef.current) {
-              isSpeakingRef.current = true;
-              if (store.state === 'idle') {
-                store.setState('listening');
-              }
-            }
-            if (silenceTimerRef.current) {
-              clearTimeout(silenceTimerRef.current);
-              silenceTimerRef.current = null;
-            }
-            speechFramesRef.current.push(new Float32Array(input));
-          } else if (isSpeakingRef.current) {
-            // Audio below threshold while currently in an utterance
-            speechFramesRef.current.push(new Float32Array(input));
-            if (!silenceTimerRef.current) {
-              silenceTimerRef.current = window.setTimeout(() => {
-                isSpeakingRef.current = false;
-                silenceTimerRef.current = null;
-                flushUtterance();
-              }, SILENCE_MS);
-            }
-          }
-        };
-
-        source.connect(processor);
-        processor.connect(ctx.destination);
-      } catch (err) {
-        console.error('Microphone init failed:', err);
-      }
+    } else {
+      connect();
     }
 
-    initMic();
-
     return () => {
       active = false;
-      if (micStreamRef.current) {
-        micStreamRef.current.getTracks().forEach((t) => t.stop());
+      unsubscribeSettings();
+      if (reconnectTimeout !== undefined) window.clearTimeout(reconnectTimeout);
+      socket?.close();
+      wsRef.current = null;
+      useVoiceStore.getState().setConnected(false);
+    };
+  }, [player]);
+
+  useEffect(() => {
+    const capture = new AudioCapture();
+    captureRef.current = capture;
+
+    const onFrame = (input: Float32Array) => {
+      const frame = new Float32Array(input);
+      let sumSquares = 0;
+      for (const sample of frame) sumSquares += sample * sample;
+      const rms = Math.sqrt(sumSquares / frame.length);
+      const isCollecting = isCollectingSpeechRef.current;
+
+      if (!isCollecting) {
+        noiseFloorRef.current = Math.min(
+          0.05,
+          Math.max(0.002, noiseFloorRef.current * 0.95 + rms * 0.05),
+        );
       }
-      if (audioCtxRef.current) {
-        audioCtxRef.current.close();
+      const threshold = Math.max(0.012, noiseFloorRef.current * 2.7);
+      const store = useVoiceStore.getState();
+      store.setAudioLevel(Math.min(100, Math.round(rms * 400)));
+
+      if (player.isSpeaking && rms > Math.max(0.05, threshold * 1.5)) interrupt();
+
+      if (isCollectingSpeechRef.current) {
+        speechFramesRef.current.push(frame);
+        if (rms > threshold) {
+          speechSamplesRef.current += frame.length;
+          silenceSamplesRef.current = 0;
+        } else {
+          silenceSamplesRef.current += frame.length;
+        }
+        if (
+          silenceSamplesRef.current >= SILENCE_SAMPLES ||
+          speechSamplesRef.current >= MAX_SPEECH_SAMPLES
+        ) {
+          flushUtterance();
+        }
+      } else if (rms > threshold) {
+        isCollectingSpeechRef.current = true;
+        speechFramesRef.current = [...preRollFramesRef.current, frame];
+        speechSamplesRef.current = frame.length;
+        silenceSamplesRef.current = 0;
+        preRollFramesRef.current = [];
+        preRollSamplesRef.current = 0;
+        store.setState('listening');
+      } else {
+        preRollFramesRef.current.push(frame);
+        preRollSamplesRef.current += frame.length;
+        while (preRollSamplesRef.current > PRE_ROLL_SAMPLES) {
+          const removed = preRollFramesRef.current.shift();
+          if (!removed) break;
+          preRollSamplesRef.current -= removed.length;
+        }
       }
     };
-  }, [flushUtterance, interrupt, store]);
 
-  // Send typed query
+    void capture.start(onFrame).catch(async (error: unknown) => {
+      await capture.stop();
+      console.error('Microphone initialization failed:', error);
+      useVoiceStore.getState().setState('idle');
+    });
+
+    return () => {
+      captureRef.current = null;
+      clearUtterance();
+      preRollFramesRef.current = [];
+      preRollSamplesRef.current = 0;
+      void capture.stop();
+      void player.dispose();
+    };
+  }, [clearUtterance, flushUtterance, interrupt, player]);
+
   const sendTextQuery = useCallback((text: string) => {
     if (!text.trim()) return;
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'text', text }));
     }
   }, []);
 
-  // Send confirm response
   const sendConfirmResponse = useCallback((approved: boolean) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'confirm', approved }));
     }
-    store.setConfirmPrompt(null);
-  }, [store]);
+    useVoiceStore.getState().setConfirmPrompt(null);
+  }, []);
 
   return {
     interrupt,
