@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useVoiceStore } from '../store/voiceStore';
 
-const WS_URL = 'ws://localhost:8000/ws/voice';
+const WS_URL = 'ws://127.0.0.1:8000/ws/voice';
 const SAMPLE_RATE = 16000;
 const VAD_THRESHOLD = 0.025; // Energy threshold to trigger speech
 const SILENCE_MS = 450;      // Silence trailing endpoint (ms)
