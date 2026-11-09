@@ -1,5 +1,30 @@
 # Agent Work Progress
 
+## Round 2 — Part 1: Ollama and connection status
+
+- Reproduced by source-path and regression checks: the HUD conflated the voice
+  WebSocket with Ollama availability, configuration failure fell back to an
+  unauthenticated WebSocket, the backend health endpoint did not identify its
+  process, and LLM stream failures were swallowed. The local Ollama probe could
+  not be completed in this non-interactive shell; live Ollama behavior remains
+  unverified.
+- Added one environment-configurable IPv4 Ollama base URL, a model-aware health
+  check in setup status and the authenticated voice WebSocket, and visible
+  outage/model-missing errors with an offline-TTS response. Setup now supports
+  independently downloading the configured voice and optional document models.
+- Added packaged health identity validation, environment-scoped development
+  origins, rejection logging, no-origin/file-origin authenticated WebSocket
+  support, configuration retry behavior, backend restart IPC, and independent
+  BACKEND / LLM / VOICE HUD indicators.
+- Added regression coverage for setup status (available, offline, model missing,
+  HTTP 500), WebSocket authentication/origin handling, typed LLM outages and
+  fallback speech, and startup with missing standard streams.
+- Verified `python -m pytest tests -q` (101 passed, 1 skipped, 16 subtests),
+  `npm run test:electron` (2 passed), `npm run build`, and `git diff --check`.
+- Not yet verified: real Ollama/model download behavior, actual Electron file
+  origin on a packaged installer, microphone/TTS output, or manual backend
+  restart on a clean Windows machine.
+
 ## WP-A0 — Documentation reset
 
 - Rewrote `CLAUDE.md` to document the current Electron + React + FastAPI

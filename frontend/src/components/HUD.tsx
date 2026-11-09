@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Orb } from './Orb';
 import { Transcript } from './Transcript';
 import { Metrics } from './Metrics';
@@ -13,8 +13,24 @@ export const HUD: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDocumentsOpen, setIsDocumentsOpen] = useState(false);
-  const { state, mode, backendStatus, backendMessage } = useVoiceStore();
-  const { interrupt, sendTextQuery, sendConfirmResponse } = useVoicePipeline();
+  const {
+    state, mode, backendStatus, backendMessage, backendConfigError,
+    connectionDownSince, isConnected, errorNotice, setErrorNotice,
+    setBackendConfigError,
+  } = useVoiceStore();
+  const { interrupt, sendTextQuery, sendConfirmResponse, retryConnection } = useVoicePipeline();
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (connectionDownSince === null) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [connectionDownSince]);
+  const retryVisible = Boolean(
+    backendConfigError
+    || backendStatus === 'failed'
+    || (!isConnected && connectionDownSince !== null && now - connectionDownSince >= 10_000),
+  );
 
   const handleSendText = (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,9 +106,26 @@ export const HUD: React.FC = () => {
 
       {/* Main Orb Center */}
       <div className="flex flex-col items-center justify-center py-3">
-        {backendStatus !== 'ready' && (
+        {(backendStatus !== 'ready' || !isConnected || backendConfigError) && (
           <div className="mb-3 text-center text-xs text-amber-300" role="status">
-            {backendStatus === 'failed' ? (backendMessage || 'Rudra could not start.') : 'Starting Rudra...'}
+            {backendConfigError || (backendStatus === 'failed'
+              ? (backendMessage || 'Rudra could not start.')
+              : !isConnected && connectionDownSince !== null
+                ? 'Reconnecting…'
+                : 'Starting Rudra...')}
+            {retryVisible && window.electronAPI?.restartBackend && (
+              <button
+                onClick={() => {
+                  setBackendConfigError('');
+                  void retryConnection().catch((error: unknown) => {
+                    setBackendConfigError(error instanceof Error ? error.message : String(error));
+                  });
+                }}
+                className="ml-2 underline"
+              >
+                Retry connection
+              </button>
+            )}
             {backendStatus === 'failed' && window.electronAPI?.openBackendLog && (
               <button
                 onClick={() => void window.electronAPI?.openBackendLog()}
@@ -130,6 +163,14 @@ export const HUD: React.FC = () => {
 
       {/* Metrics & Telemetry Bar */}
       <Metrics />
+      {errorNotice && (
+        <div className="flex items-start justify-between gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200" role="alert">
+          <span>{errorNotice.message}</span>
+          <button onClick={() => setErrorNotice(null)} aria-label="Dismiss error" className="shrink-0">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Settings Modal */}
       <SettingsModal

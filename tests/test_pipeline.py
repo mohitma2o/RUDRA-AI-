@@ -1,10 +1,14 @@
 """Unit tests for pipeline helpers (WP2/WP9)."""
 
 import sys
+import asyncio
 from pathlib import Path
+import pytest
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from backend.app.voice.pipeline import script_lang, SENT_END
+from backend.app.voice import pipeline
+import httpx
 
 
 class TestScriptLang:
@@ -162,3 +166,105 @@ def test_stt_model_size_is_unchanged_without_reload(monkeypatch):
     monkeypatch.setattr(stt, "_model", loaded_model)
     stt.set_model_size(stt._model_size)
     assert stt._model is loaded_model
+
+
+def test_llm_sentences_raises_typed_error_when_ollama_is_unreachable(monkeypatch):
+    class FailedStream:
+        async def __aenter__(self):
+            raise httpx.ConnectError("offline")
+
+        async def __aexit__(self, *_):
+            return None
+
+    class FailedClient:
+        def __init__(self, timeout=None):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def stream(self, *_args, **_kwargs):
+            return FailedStream()
+
+    monkeypatch.setattr(pipeline.httpx, "AsyncClient", FailedClient)
+
+    async def run():
+        with pytest.raises(pipeline.LLMUnavailableError):
+            await pipeline.llm_sentences([], "voice-model", asyncio.Queue())
+
+    asyncio.run(run())
+
+
+def test_run_turn_reports_and_speaks_offline_when_ollama_is_unreachable(monkeypatch):
+    class FailedStream:
+        async def __aenter__(self):
+            raise httpx.ConnectError("offline")
+
+        async def __aexit__(self, *_):
+            return None
+
+    class FailedClient:
+        def __init__(self, timeout=None):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        def stream(self, *_args, **_kwargs):
+            return FailedStream()
+
+    monkeypatch.setattr(pipeline.httpx, "AsyncClient", FailedClient)
+    monkeypatch.setattr(pipeline, "offline_tts", lambda *_: asyncio.sleep(0, result=b"wav"))
+    messages = []
+    audio = []
+
+    async def send_json(message):
+        messages.append(message)
+
+    async def send_bytes(data):
+        audio.append(data)
+
+    asyncio.run(
+        pipeline.run_turn(
+            send_json=send_json,
+            send_bytes=send_bytes,
+            history=[],
+            user_lang="en",
+            model="voice-model",
+            turn=1,
+        )
+    )
+
+    assert any(message.get("code") == "llm_unreachable" for message in messages)
+    assert any(message.get("text") == "My language model isn't running." for message in messages)
+    assert audio == [b"wav"]
+
+
+def test_run_main_redirects_missing_stdio_before_starting_uvicorn(monkeypatch):
+    from backend import run
+    from types import SimpleNamespace
+
+    calls = []
+    monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=lambda *args, **kwargs: calls.append(kwargs)))
+    original_stdout, original_stderr = sys.stdout, sys.stderr
+    sys.stdout = None
+    sys.stderr = None
+    redirected_stdout = None
+    redirected_stderr = None
+    try:
+        run.main()
+        redirected_stdout, redirected_stderr = sys.stdout, sys.stderr
+    finally:
+        sys.stdout, sys.stderr = original_stdout, original_stderr
+        if redirected_stdout is not None:
+            redirected_stdout.close()
+        if redirected_stderr is not None:
+            redirected_stderr.close()
+
+    assert calls and calls[0]["log_config"] is None

@@ -15,7 +15,9 @@ from typing import Awaitable, Callable, Optional
 
 import httpx
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
+from ..ollama import OLLAMA_BASE_URL
+
+OLLAMA_URL = f"{OLLAMA_BASE_URL}/api/chat"
 
 # Sentence boundary: after .!?  or Devanagari danda  or newline, followed by whitespace
 SENT_END = re.compile(r"(?<=[.!?\u0964\n])\s+")
@@ -35,6 +37,14 @@ SYSTEM = (
     "No markdown, no emojis, no lists, no bullet points, no URLs read aloud. "
     "Never break character with AI disclaimers."
 )
+
+
+class LLMUnavailableError(RuntimeError):
+    """Raised when the configured local Ollama service cannot be reached."""
+
+
+class OllamaModelNotFoundError(RuntimeError):
+    """Raised when Ollama does not have the selected model tag installed."""
 
 
 def script_lang(text: str, default: str = "en") -> str:
@@ -131,6 +141,14 @@ async def llm_sentences(
     try:
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream("POST", OLLAMA_URL, json=payload) as response:
+                if response.status_code == 404:
+                    await response.aread()
+                    raise OllamaModelNotFoundError(
+                        f'model "{model}" not found, run: ollama pull {model}'
+                    )
+                if response.is_error:
+                    await response.aread()
+                    response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line:
                         continue
@@ -155,9 +173,19 @@ async def llm_sentences(
         if buf.strip():
             await sentence_queue.put(buf.strip())
     except asyncio.CancelledError:
-        pass  # Interruption is expected; cleanup happens in finally
-    except Exception as e:
-        print(f"[LLM] Stream error: {e}")
+        raise
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise OllamaModelNotFoundError(
+                f'model "{model}" not found, run: ollama pull {model}'
+            ) from exc
+        body = (exc.response.text or "").strip()
+        detail = f": {body[:300]}" if body else ""
+        raise LLMUnavailableError(
+            f"Ollama returned HTTP {exc.response.status_code}{detail}"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise LLMUnavailableError("Rudra can't reach Ollama. Is it running?") from exc
     finally:
         await sentence_queue.put(None)  # Sentinel
 
@@ -186,6 +214,7 @@ async def run_turn(
         while True:
             sentence = await q.get()
             if sentence is None:
+                await producer
                 break
 
             lang = script_lang(sentence, user_lang)
@@ -239,6 +268,38 @@ async def run_turn(
         async with _lock:
             await send_json({"type": "timing", **timing})
 
+    except (LLMUnavailableError, OllamaModelNotFoundError) as exc:
+        if isinstance(exc, OllamaModelNotFoundError):
+            code = "model_missing"
+            message = str(exc)
+            fallback = "My language model isn't installed."
+        else:
+            code = "llm_unreachable"
+            message = "Rudra can't reach Ollama. Is it running?"
+            fallback = "My language model isn't running."
+        async with _lock:
+            await send_json({"type": "error", "code": code, "message": message})
+            await send_json({
+                "type": "reply_delta",
+                "turn": turn,
+                "text": fallback,
+            })
+        fallback_audio = await offline_tts(fallback, "en")
+        if fallback_audio:
+            async with _lock:
+                await send_json({
+                    "type": "audio",
+                    "turn": turn,
+                    "seq": 0,
+                    "lang": "en",
+                    "mime": "audio/wav",
+                })
+                await send_bytes(fallback_audio)
+        history.append({"role": "assistant", "content": fallback})
+        async with _lock:
+            await send_json({"type": "turn_end", "turn": turn})
+
     finally:
         producer.cancel()
+        await asyncio.gather(producer, return_exceptions=True)
         await asyncio.gather(producer, return_exceptions=True)

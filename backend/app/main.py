@@ -7,6 +7,7 @@ Spawned by the Electron main process; run directly with:
 
 import asyncio
 from contextlib import asynccontextmanager
+import hashlib
 import json
 import os
 import re
@@ -19,9 +20,10 @@ from typing import AsyncIterator, Callable, Optional
 
 import httpx
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 # Ensure both backend/ and repo root are in sys.path
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -35,6 +37,7 @@ from app.voice import stt as stt_module
 from app.voice.pipeline import VOICES, run_turn, script_lang, synth
 from app.voice.wake import find_wake, strip_wake
 from app.documents import router as documents_router, shutdown_document_jobs
+from app.ollama import OLLAMA_BASE_URL
 from app.tools import hardware as _hardware_tools  # noqa: F401
 from app.tools import browser as _browser_tools    # noqa: F401
 from app.tools import applications as _application_tools  # noqa: F401
@@ -57,11 +60,13 @@ if not _API_TOKEN:
     _API_TOKEN = secrets.token_urlsafe(32)
     print(f"[Security] Standalone backend token: {_API_TOKEN}")
 
-_ALLOWED_ORIGINS = (
+_DEV_ORIGINS = (
     "http://127.0.0.1:5173",
     "http://localhost:5173",
-    "null",
 )
+_PACKAGED_ORIGINS = ("file://", "null")
+_IS_DEV = os.environ.get("RUDRA_DEV") == "1"
+_ALLOWED_ORIGINS = (*_DEV_ORIGINS, *_PACKAGED_ORIGINS) if _IS_DEV else _PACKAGED_ORIGINS
 
 app.add_middleware(
     CORSMiddleware,
@@ -96,7 +101,7 @@ async def _startup() -> None:
                 "options": {"num_predict": 1, "num_ctx": 512},
             }
             async with httpx.AsyncClient(timeout=15) as c:
-                await c.post("http://localhost:11434/api/chat", json=payload)
+                await c.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
             print("[LLM] Ollama warm-up complete.")
         except Exception as e:
             print(f"[LLM] Warm-up failed (non-fatal): {e}")
@@ -111,7 +116,11 @@ async def _shutdown() -> None:
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "timestamp": time.time()}
+    return {
+        "status": "ok",
+        "timestamp": time.time(),
+        "instance": hashlib.sha256(_API_TOKEN.encode()).hexdigest()[:16],
+    }
 
 
 def _required_model() -> str:
@@ -131,30 +140,56 @@ app.include_router(
 )
 
 
-@app.get("/api/setup/status")
-async def setup_status(_: None = Depends(_require_api_token)):
-    required_model = _required_model()
-    ollama_running = False
-    installed_models: list[str] = []
-    ollama_error: Optional[str] = None
+def _document_model() -> str:
+    config = _load_config()
+    return config.get(
+        "ollama_doc_model",
+        config.get("ollama_voice_model", config.get("ollama_model", "qwen2.5:3b-instruct-q4_K_M")),
+    )
+
+
+async def ollama_health() -> dict:
+    """Report Ollama reachability and exact configured model-tag availability."""
+    voice_model = _required_model()
+    doc_model = _document_model()
+    result = {
+        "reachable": False,
+        "voice_model": voice_model,
+        "voice_model_installed": False,
+        "doc_model": doc_model,
+        "doc_model_installed": False,
+        "models_installed": [],
+        "error": None,
+    }
     try:
         async with httpx.AsyncClient(timeout=3) as client:
-            response = await client.get("http://127.0.0.1:11434/api/tags")
+            response = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
             response.raise_for_status()
-            ollama_running = True
-            installed_models = [
-                str(model.get("name", ""))
-                for model in response.json().get("models", [])
-                if model.get("name")
-            ]
-    except httpx.RequestError as exc:
-        ollama_error = f"Ollama is not reachable: {exc}"
+            payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+            raise ValueError("Ollama returned an invalid model list.")
+        installed_models = [
+            str(model.get("name", ""))
+            for model in payload["models"]
+            if isinstance(model, dict) and model.get("name")
+        ]
+        installed = {name.casefold() for name in installed_models}
+        result["reachable"] = True
+        result["models_installed"] = installed_models
+        result["voice_model_installed"] = voice_model.casefold() in installed
+        result["doc_model_installed"] = doc_model.casefold() in installed
+    except httpx.RequestError:
+        result["error"] = "Ollama is not running or is not reachable."
     except httpx.HTTPStatusError as exc:
-        ollama_running = True
-        ollama_error = f"Ollama returned HTTP {exc.response.status_code}."
+        result["error"] = f"Ollama returned HTTP {exc.response.status_code}."
     except (ValueError, AttributeError) as exc:
-        ollama_running = True
-        ollama_error = f"Ollama returned an invalid model list: {exc}"
+        result["error"] = str(exc)
+    return result
+
+
+@app.get("/api/setup/status")
+async def setup_status(_: None = Depends(_require_api_token)):
+    health = await ollama_health()
 
     try:
         async with httpx.AsyncClient(timeout=2) as client:
@@ -165,25 +200,39 @@ async def setup_status(_: None = Depends(_require_api_token)):
 
     bundled_stt = resource_dir() / "backend" / "models" / "whisper-base"
     return {
-        "ollama_running": ollama_running,
-        "models_installed": installed_models,
-        "required_model": required_model,
+        "ollama_running": health["reachable"],
+        "models_installed": health["models_installed"],
+        "required_model": health["voice_model"],
+        "voice_model": health["voice_model"],
+        "voice_model_installed": health["voice_model_installed"],
+        "doc_model": health["doc_model"],
+        "doc_model_installed": health["doc_model_installed"],
         "stt_ready": bool(getattr(stt_module, "_model", None)) or bundled_stt.is_dir(),
         "tts_online": tts_online,
-        "error": ollama_error,
+        "error": health["error"],
     }
 
 
+class SetupModelRequest(BaseModel):
+    model: Optional[str] = None
+
+
 @app.post("/api/setup/pull-model")
-async def pull_setup_model(_: None = Depends(_require_api_token)):
-    required_model = _required_model()
+async def pull_setup_model(
+    request: SetupModelRequest = Body(default=SetupModelRequest()),
+    _: None = Depends(_require_api_token),
+):
+    allowed_models = {_required_model(), _document_model()}
+    required_model = request.model or _required_model()
+    if required_model not in allowed_models:
+        raise HTTPException(status_code=422, detail="Only the configured voice and document models can be downloaded.")
 
     async def progress_stream():
         try:
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream(
                     "POST",
-                    "http://127.0.0.1:11434/api/pull",
+                    f"{OLLAMA_BASE_URL}/api/pull",
                     json={"name": required_model, "stream": True},
                 ) as response:
                     response.raise_for_status()
@@ -389,6 +438,7 @@ class Session:
         self.history: list[dict] = []
         self.send_lock = asyncio.Lock()
         self.pending_confirm: Optional[asyncio.Future] = None
+        self.llm_status_task: Optional[asyncio.Task] = None
 
         # Settings (can be updated via 'config' messages)
         cfg = _load_config()
@@ -466,6 +516,23 @@ class Session:
             await self.ws.send_text(json.dumps(data, ensure_ascii=False))
         except Exception:
             pass
+
+    async def push_llm_status(self) -> None:
+        health = await ollama_health()
+        await self.send_json({
+            "type": "llm_status",
+            "reachable": health["reachable"],
+            "model": health["voice_model"],
+            "installed": health["voice_model_installed"],
+            "error": health["error"],
+            "doc_model": health["doc_model"],
+            "doc_model_installed": health["doc_model_installed"],
+        })
+
+    async def report_llm_status(self) -> None:
+        while True:
+            await asyncio.sleep(10)
+            await self.push_llm_status()
 
     async def send_bytes(self, data: bytes) -> None:
         try:
@@ -607,7 +674,9 @@ class Session:
 
 @app.websocket("/ws/voice")
 async def ws_voice(ws: WebSocket) -> None:
-    if ws.headers.get("origin") not in _ALLOWED_ORIGINS:
+    origin = ws.headers.get("origin")
+    if origin not in _ALLOWED_ORIGINS and not (not _IS_DEV and origin is None):
+        print(f"[WS] Rejected origin {origin!r}; closing with code 1008.")
         await ws.close(code=1008)
         return
 
@@ -631,6 +700,8 @@ async def ws_voice(ws: WebSocket) -> None:
 
     session = Session(ws)
     await session.send_json({"type": "state", "state": "idle"})
+    await session.push_llm_status()
+    session.llm_status_task = asyncio.create_task(session.report_llm_status())
     pending_meta: Optional[dict] = None  # metadata frame waiting for binary
 
     try:
@@ -674,6 +745,9 @@ async def ws_voice(ws: WebSocket) -> None:
     except Exception as e:
         print(f"[WS] Unexpected error: {e}")
     finally:
+        if session.llm_status_task:
+            session.llm_status_task.cancel()
+            await asyncio.gather(session.llm_status_task, return_exceptions=True)
         await session.interrupt()
 
 

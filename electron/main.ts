@@ -1,4 +1,4 @@
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { mkdirSync } from 'fs';
 import { ChildProcess, spawn } from 'child_process';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, shell, Tray } from 'electron';
@@ -79,8 +79,18 @@ function checkBackendHealth(): Promise<boolean> {
   if (!config) return Promise.resolve(false);
   return new Promise((resolve) => {
     const req = http.get(`${config.httpBase}/health`, (res) => {
-      res.resume();
-      resolve(res.statusCode === 200);
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => { body += chunk; });
+      res.on('end', () => {
+        try {
+          const health = JSON.parse(body) as { status?: string; instance?: string };
+          const expected = createHash('sha256').update(config.token).digest('hex').slice(0, 16);
+          resolve(res.statusCode === 200 && health.status === 'ok' && health.instance === expected);
+        } catch {
+          resolve(false);
+        }
+      });
     });
     req.on('error', () => resolve(false));
     req.setTimeout(1500, () => {
@@ -166,6 +176,7 @@ async function startBackend(isRestart = false): Promise<void> {
         PYTHONPATH: repoRoot,
         RUDRA_PORT: new URL(backendConfig.httpBase).port,
         RUDRA_TOKEN: backendConfig.token,
+        RUDRA_DEV: isDev ? '1' : '0',
         RUDRA_DATA_DIR: userDataDir,
       },
       shell: false,
@@ -183,7 +194,7 @@ async function startBackend(isRestart = false): Promise<void> {
     child.on('exit', (code, signal) => {
       appendBackendLog(`[${new Date().toISOString()}] Backend exited (code=${code}, signal=${signal}).\n`);
       if (backendProcess === child) backendProcess = null;
-      if (!isQuitting) {
+      if (!isQuitting && !manualRestartInProgress) {
         sendBackendStatus('failed', `Backend exited. See ${backendLogPath}`);
         scheduleBackendRestart();
       }
@@ -220,6 +231,40 @@ function killBackend(): void {
   } else {
     child.kill('SIGTERM');
   }
+}
+
+let manualRestartInProgress = false;
+
+async function restartBackend(): Promise<void> {
+  if (isQuitting) throw new Error('Rudra is shutting down.');
+  restartScheduled = false;
+  restartCount = 0;
+  const previous = backendProcess;
+  if (previous) {
+    manualRestartInProgress = true;
+    try {
+      const stopped = new Promise<void>((resolve, reject) => {
+        if (previous.exitCode !== null) {
+          resolve();
+          return;
+        }
+        const timer = setTimeout(() => {
+          previous.removeListener('exit', onExit);
+          reject(new Error('The previous backend process did not stop.'));
+        }, 10_000);
+        const onExit = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        previous.once('exit', onExit);
+      });
+      killBackend();
+      await stopped;
+    } finally {
+      manualRestartInProgress = false;
+    }
+  }
+  await startBackend(true);
 }
 
 function isAllowedAppUrl(url: string): boolean {
@@ -331,6 +376,7 @@ ipcMain.on('window-minimize', () => mainWindow?.minimize());
 ipcMain.on('window-close', () => mainWindow?.hide());
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('get-backend-config', () => backendConfig);
+ipcMain.handle('restart-backend', () => restartBackend());
 ipcMain.handle('open-backend-log', () => {
   if (backendLogPath) void shell.openPath(backendLogPath);
 });

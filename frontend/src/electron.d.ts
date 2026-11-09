@@ -12,6 +12,7 @@ declare global {
         wsUrl: string;
         token: string;
       } | null>;
+      restartBackend: () => Promise<void>;
       openBackendLog: () => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       onHotkeyTrigger: (callback: () => void) => () => void;

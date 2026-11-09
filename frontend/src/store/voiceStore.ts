@@ -10,6 +10,21 @@ export interface TimingMetrics {
   total_ms?: number;
 }
 
+export interface LLMStatus {
+  reachable: boolean;
+  model: string;
+  installed: boolean;
+  error?: string | null;
+  doc_model?: string;
+  doc_model_installed?: boolean;
+}
+
+export interface VoiceStatus {
+  sttReady: boolean;
+  ttsOnline: boolean;
+  error?: string | null;
+}
+
 export interface HistoryItem {
   id: string;
   role: 'user' | 'assistant';
@@ -29,6 +44,11 @@ export interface VoiceStore {
   isConnected: boolean;
   backendStatus: BackendStatus;
   backendMessage: string;
+  backendConfigError: string;
+  connectionDownSince: number | null;
+  llmStatus: LLMStatus | null;
+  voiceStatus: VoiceStatus | null;
+  errorNotice: { code?: string; message: string } | null;
   audioLevel: number;
   history: HistoryItem[];
   confirmPrompt: { tool: string; args: Record<string, any> } | null;
@@ -47,6 +67,11 @@ export interface VoiceStore {
   setTiming: (metrics: TimingMetrics) => void;
   setConnected: (connected: boolean) => void;
   setBackendStatus: (status: BackendStatus, message?: string) => void;
+  setBackendConfigError: (message: string) => void;
+  setConnectionDownSince: (timestamp: number | null) => void;
+  setLLMStatus: (status: LLMStatus) => void;
+  setVoiceStatus: (status: VoiceStatus) => void;
+  setErrorNotice: (notice: { code?: string; message: string } | null) => void;
   setAudioLevel: (level: number) => void;
   setConfirmPrompt: (data: { tool: string; args: Record<string, any> } | null) => void;
   updateSettings: (newSettings: Partial<VoiceStore['settings']>) => void;
@@ -64,6 +89,11 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   isConnected: false,
   backendStatus: 'starting',
   backendMessage: '',
+  backendConfigError: '',
+  connectionDownSince: null,
+  llmStatus: null,
+  voiceStatus: null,
+  errorNotice: null,
   audioLevel: 0,
   history: [],
   confirmPrompt: null,
@@ -121,6 +151,11 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   setTiming: (timing) => set({ timing }),
   setConnected: (isConnected) => set({ isConnected }),
   setBackendStatus: (backendStatus, backendMessage = '') => set({ backendStatus, backendMessage }),
+  setBackendConfigError: (backendConfigError) => set({ backendConfigError }),
+  setConnectionDownSince: (connectionDownSince) => set({ connectionDownSince }),
+  setLLMStatus: (llmStatus) => set({ llmStatus }),
+  setVoiceStatus: (voiceStatus) => set({ voiceStatus }),
+  setErrorNotice: (errorNotice) => set({ errorNotice }),
   setAudioLevel: (audioLevel) => set({ audioLevel }),
   setConfirmPrompt: (confirmPrompt) => set({ confirmPrompt }),
   updateSettings: (newSettings) =>

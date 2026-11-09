@@ -4,7 +4,6 @@ import { AudioPlayer } from '../audio/player';
 import { createVoiceSocket } from '../net/socket';
 import { useVoiceStore } from '../store/voiceStore';
 
-const FALLBACK_WS_URL = 'ws://127.0.0.1:8000/ws/voice';
 const SAMPLE_RATE = 16000;
 const PRE_ROLL_SAMPLES = Math.round(SAMPLE_RATE * 0.3);
 const MIN_SPEECH_SAMPLES = Math.round(SAMPLE_RATE * 0.25);
@@ -34,6 +33,7 @@ export function useVoicePipeline() {
     );
   }
   const player = playerRef.current;
+  const retryRef = useRef<(() => Promise<void>) | null>(null);
 
   const clearUtterance = useCallback(() => {
     speechFramesRef.current = [];
@@ -84,7 +84,7 @@ export function useVoicePipeline() {
   useEffect(() => {
     let active = true;
     let reconnectTimeout: number | undefined;
-    let wsUrl = FALLBACK_WS_URL;
+    let wsUrl = '';
     let token = '';
     let socket: WebSocket | null = null;
 
@@ -101,13 +101,19 @@ export function useVoicePipeline() {
       let pendingAudioMeta: { turn: number; seq: number; lang: string } | null = null;
 
       socket.onopen = () => {
-        useVoiceStore.getState().setConnected(true);
+        const store = useVoiceStore.getState();
+        store.setConnected(true);
+        store.setConnectionDownSince(null);
+        store.setBackendConfigError('');
         sendSettings();
       };
       socket.onclose = () => {
-        if (wsRef.current === socket) wsRef.current = null;
-        useVoiceStore.getState().setConnected(false);
-        if (active) reconnectTimeout = window.setTimeout(connect, 2000);
+        const wasCurrentSocket = wsRef.current === socket;
+        if (wasCurrentSocket) wsRef.current = null;
+        const store = useVoiceStore.getState();
+        store.setConnected(false);
+        if (store.connectionDownSince === null) store.setConnectionDownSince(Date.now());
+        if (active && wasCurrentSocket) reconnectTimeout = window.setTimeout(connect, 2000);
       };
       socket.onerror = (event) => console.warn('WebSocket error', event);
       socket.onmessage = (event) => {
@@ -136,6 +142,12 @@ export function useVoicePipeline() {
             case 'confirm':
               store.setConfirmPrompt({ tool: message.tool, args: message.args });
               break;
+            case 'llm_status':
+              store.setLLMStatus(message);
+              break;
+            case 'error':
+              store.setErrorNotice({ code: message.code, message: message.message || 'The request failed.' });
+              break;
             default:
               break;
           }
@@ -150,20 +162,29 @@ export function useVoicePipeline() {
       if (state.settings !== previousState.settings) sendSettings();
     });
 
-    if (window.electronAPI) {
-      void window.electronAPI.getBackendConfig()
-        .then((config) => {
-          if (config?.wsUrl) wsUrl = config.wsUrl;
-          if (config?.token) token = config.token;
-          connect();
-        })
-        .catch((error: unknown) => {
-          console.error('Could not get backend connection settings:', error);
-          connect();
-        });
-    } else {
-      connect();
-    }
+    const configure = async (restart: boolean) => {
+      try {
+        if (!window.electronAPI) {
+          throw new Error('Backend configuration is only available in the Rudra desktop app.');
+        }
+        if (restart) await window.electronAPI.restartBackend();
+        const config = await window.electronAPI.getBackendConfig();
+        if (!config?.wsUrl || !config.token) {
+          throw new Error('Backend configuration unavailable.');
+        }
+        wsUrl = config.wsUrl;
+        token = config.token;
+        if (socket && socket.readyState !== WebSocket.CLOSED) socket.close();
+        useVoiceStore.getState().setBackendConfigError('');
+        connect();
+      } catch (error) {
+        if (!active) return;
+        const message = error instanceof Error ? error.message : String(error);
+        useVoiceStore.getState().setBackendConfigError(message || 'Backend configuration unavailable.');
+      }
+    };
+    retryRef.current = () => configure(true);
+    void configure(false);
 
     return () => {
       active = false;
@@ -172,6 +193,7 @@ export function useVoicePipeline() {
       socket?.close();
       wsRef.current = null;
       useVoiceStore.getState().setConnected(false);
+      retryRef.current = null;
     };
   }, [player]);
 
@@ -261,9 +283,14 @@ export function useVoicePipeline() {
     useVoiceStore.getState().setConfirmPrompt(null);
   }, []);
 
+  const retryConnection = useCallback(async () => {
+    await retryRef.current?.();
+  }, []);
+
   return {
     interrupt,
     sendTextQuery,
     sendConfirmResponse,
+    retryConnection,
   };
 }
