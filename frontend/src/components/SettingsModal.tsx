@@ -8,9 +8,11 @@ interface SettingsModalProps {
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
-  const { settings, updateSettings, mode, setMode } = useVoiceStore();
+  const { settings, updateSettings, mode, setMode, llmStatus } = useVoiceStore();
 
   if (!isOpen) return null;
+  const installedModels = llmStatus?.models_installed ?? [];
+  const hardwareProfile = llmStatus?.hardware_profile;
 
   return (
     <div
@@ -67,7 +69,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-sky-400"
           >
             <option value="auto">Auto-detect (EN / HI / PA)</option>
-            <option value="en">English (India)</option>
+            <option value="en">English (US)</option>
             <option value="hi">Hindi (हिन्दी)</option>
             <option value="pa">Punjabi (ਪੰਜਾਬੀ)</option>
           </select>
@@ -77,17 +79,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
             <Cpu className="w-3.5 h-3.5 text-amber-400" />
-            Ollama Model (i3 Optimized)
+            Ollama Model
           </label>
           <select
             value={settings.llm_model}
             onChange={(e) => updateSettings({ llm_model: e.target.value })}
+            disabled={!llmStatus?.reachable || installedModels.length === 0}
             className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-sky-400 font-mono"
           >
-            <option value="qwen2.5:1.5b">qwen2.5:1.5b (Ultra fast, recommended for i3)</option>
-            <option value="qwen2.5:3b-instruct-q4_K_M">qwen2.5:3b (Standard instructed)</option>
-            <option value="phi3:mini">phi3:mini (Microsoft)</option>
+            {!installedModels.includes(settings.llm_model) && (
+              <option value={settings.llm_model} disabled>
+                {settings.llm_model} (not installed)
+              </option>
+            )}
+            {installedModels.map((model) => {
+              const recommended = hardwareProfile?.recommended_models.includes(model);
+              return (
+                <option key={model} value={model}>
+                  {model}{recommended ? ' (recommended)' : ''}
+                </option>
+              );
+            })}
           </select>
+          {hardwareProfile && (
+            <p className="text-[10px] text-slate-400">
+              {hardwareProfile.tier.toUpperCase()} profile · {hardwareProfile.ram_gb} GB RAM
+              <br />
+              Recommended: {hardwareProfile.recommended_models.join(', ')}
+              <br />
+              {hardwareProfile.basis}
+            </p>
+          )}
+          {!llmStatus && (
+            <p className="text-[10px] text-slate-400">Loading installed Ollama models…</p>
+          )}
+          {llmStatus && !llmStatus.reachable && (
+            <p className="text-[10px] text-amber-300">
+              Ollama is unavailable; start it to load installed models.
+            </p>
+          )}
         </div>
 
         {/* Close Button */}

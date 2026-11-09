@@ -17,6 +17,13 @@ export interface LLMStatus {
   error?: string | null;
   doc_model?: string;
   doc_model_installed?: boolean;
+  models_installed?: string[];
+  hardware_profile?: {
+    tier: 'low' | 'mid' | 'high';
+    ram_gb: number;
+    recommended_models: string[];
+    basis: string;
+  };
 }
 
 export interface VoiceStatus {
@@ -56,6 +63,7 @@ export interface VoiceStore {
   errorNotice: { code?: string; message: string } | null;
   notesReady: NotesReady | null;
   audioLevel: number;
+  isMicMuted: boolean;
   history: HistoryItem[];
   confirmPrompt: { tool: string; args: Record<string, any> } | null;
   settings: {
@@ -80,6 +88,7 @@ export interface VoiceStore {
   setErrorNotice: (notice: { code?: string; message: string } | null) => void;
   setNotesReady: (notice: NotesReady | null) => void;
   setAudioLevel: (level: number) => void;
+  setMicMuted: (muted: boolean) => void;
   setConfirmPrompt: (data: { tool: string; args: Record<string, any> } | null) => void;
   updateSettings: (newSettings: Partial<VoiceStore['settings']>) => void;
   resetTurn: () => void;
@@ -103,6 +112,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   errorNotice: null,
   notesReady: null,
   audioLevel: 0,
+  isMicMuted: false,
   history: [],
   confirmPrompt: null,
   settings: {
@@ -166,6 +176,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   setErrorNotice: (errorNotice) => set({ errorNotice }),
   setNotesReady: (notesReady) => set({ notesReady }),
   setAudioLevel: (audioLevel) => set({ audioLevel }),
+  setMicMuted: (isMicMuted) => set({ isMicMuted }),
   setConfirmPrompt: (confirmPrompt) => set({ confirmPrompt }),
   updateSettings: (newSettings) =>
     set((s) => ({

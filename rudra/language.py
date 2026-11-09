@@ -2,8 +2,8 @@
 
 VOICE_MAP = {
     "hi": "hi-IN-MadhurNeural",
-    "pa": "pa-IN-AmanNeural",
-    "en": "en-IN-PrabhatNeural",
+    "pa": "pa-IN-GurpreetNeural",
+    "en": "en-US-SteffanNeural",
 }
 
 

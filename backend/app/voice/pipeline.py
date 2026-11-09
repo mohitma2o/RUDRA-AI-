@@ -23,9 +23,9 @@ OLLAMA_URL = f"{OLLAMA_BASE_URL}/api/chat"
 SENT_END = re.compile(r"(?<=[.!?\u0964\n])\s+")
 
 VOICES = {
-    "en": "en-IN-PrabhatNeural",
+    "en": "en-US-SteffanNeural",
     "hi": "hi-IN-MadhurNeural",
-    "pa": "pa-IN-GaganNeural",
+    "pa": "pa-IN-GurpreetNeural",
 }
 
 SYSTEM = (

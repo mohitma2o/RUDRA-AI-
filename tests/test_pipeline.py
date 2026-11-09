@@ -32,6 +32,14 @@ class TestScriptLang:
         assert script_lang("", "hi") == "hi"
 
 
+def test_tts_voices_cover_english_hindi_and_punjabi():
+    assert pipeline.VOICES == {
+        "en": "en-US-SteffanNeural",
+        "hi": "hi-IN-MadhurNeural",
+        "pa": "pa-IN-GurpreetNeural",
+    }
+
+
 class TestSentenceEnd:
     def test_splits_on_period(self):
         text = "Hello world. How are you?"

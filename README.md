@@ -90,9 +90,11 @@ benchmarked across supported hardware.
   - `Tier.AUTO`: Non-destructive queries (time, volume, brightness, screenshots) run immediately.
   - `Tier.CONFIRM`: Destructive commands (power off, restart, sleep) pause and show the requested tool and parameters in the HUD. The user must choose **Approve** or **Cancel**; the prompt expires after 20 seconds. Voice-only approval is not supported.
 - **🌐 Multilingual by Design:** Automatic script detection responds with native accents and neural voices:
-  - **English (India):** `en-IN-PrabhatNeural`
+  - **English:** `en-US-SteffanNeural`
   - **Hindi (Devanagari):** `hi-IN-MadhurNeural`
-  - **Punjabi (Gurmukhi):** `pa-IN-GaganNeural`
+  - **Punjabi (Gurmukhi):** `pa-IN-GurpreetNeural`
+- **🎤 Instant microphone mute:** The HUD mute control disables microphone capture and clears buffered audio; typed requests remain available while muted.
+- **🧠 Hardware-aware Ollama selection:** The settings menu lists installed Ollama models and recommends Low, Mid, or High profiles based on system RAM. GPU VRAM is not currently inspected.
 - **🎬 Autonomous Media Control:** Playwright browser automation with persistent context (`.rudra/browser/`) searches and auto-plays songs/videos on YouTube without repetitive sign-ins.
 - **🖥️ Desktop & Hardware Automation:** Control master system volume, screen brightness, take timestamped screenshots to `~/Pictures/Rudra/`, and lock your Windows workstation.
 - **📂 Scoped File Access:** Search, open, and read files only inside Desktop, Documents, Downloads, Pictures, Music, or Videos. App closing requires confirmation.

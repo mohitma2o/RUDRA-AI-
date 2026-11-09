@@ -16,7 +16,8 @@ class LanguageFlowTests(unittest.TestCase):
         self.assertEqual(hindi, "hi")
         self.assertEqual(punjabi, "pa")
         self.assertEqual(_choose_voice(hindi), "hi-IN-MadhurNeural")
-        self.assertEqual(_choose_voice(punjabi), "pa-IN-AmanNeural")
+        self.assertEqual(_choose_voice(punjabi), "pa-IN-GurpreetNeural")
+        self.assertEqual(_choose_voice("en"), "en-US-SteffanNeural")
 
 
 if __name__ == "__main__":

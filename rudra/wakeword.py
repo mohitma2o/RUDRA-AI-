@@ -7,6 +7,11 @@ from typing import Callable
 
 import numpy as np
 
+try:
+    from .state import state as app_state
+except ImportError:
+    from state import state as app_state
+
 _stop_event = Event()
 
 
@@ -111,6 +116,11 @@ def _speech_recognition_loop(callback: Callable[[str], None]) -> None:
             silent_chunks = 0
             recording = False
             while not _stop_event.is_set():
+                if app_state.is_muted:
+                    frames = []
+                    recording = False
+                    time.sleep(0.05)
+                    break
                 raw = stream.read(CHUNK, exception_on_overflow=False)
                 audio_chunk = np.frombuffer(raw, dtype=np.int16)
                 energy = np.abs(audio_chunk).mean()
@@ -124,7 +134,7 @@ def _speech_recognition_loop(callback: Callable[[str], None]) -> None:
                     if silent_chunks >= SILENCE_CHUNKS:
                         break
 
-            if not frames or _stop_event.is_set():
+            if not frames or _stop_event.is_set() or app_state.is_muted:
                 continue
 
             # Build a WAV buffer and transcribe locally
@@ -144,7 +154,10 @@ def _speech_recognition_loop(callback: Callable[[str], None]) -> None:
                     initial_prompt="Rudra.",
                 )
                 text = " ".join(s.text.lower().strip() for s in segs)
-                if any(w in text for w in ("rudra", "rudhra", "rudar", "rudraa", "roodra")):
+                if (
+                    not app_state.is_muted
+                    and any(w in text for w in ("rudra", "rudhra", "rudar", "rudraa", "roodra"))
+                ):
                     callback("Rudra")
             except Exception as exc:
                 print(f"Wake word fallback transcription error: {exc}")
@@ -190,6 +203,9 @@ def _openwakeword_loop(callback: Callable[[str], None], model) -> None:
     try:
         while not _stop_event.is_set():
             frame = stream.read(1280, exception_on_overflow=False)
+            if app_state.is_muted:
+                time.sleep(0.01)
+                continue
             audio = np.frombuffer(frame, dtype=np.int16)
             predictions = model.predict(audio)
             trigger_name = _select_wakeword_trigger(predictions, threshold=threshold)

@@ -37,6 +37,7 @@ from app.voice import stt as stt_module
 from app.voice.pipeline import VOICES, run_turn, script_lang, synth
 from app.voice.wake import find_wake, strip_wake
 from app.documents import router as documents_router, shutdown_document_jobs
+from app.llm_manager import LLMManager
 from app.ollama import OLLAMA_BASE_URL
 from app.tools import hardware as _hardware_tools  # noqa: F401
 from app.tools import browser as _browser_tools    # noqa: F401
@@ -44,6 +45,8 @@ from app.tools import applications as _application_tools  # noqa: F401
 from app.tools import files as _file_tools  # noqa: F401
 from .paths import data_dir, load_config, resource_dir, save_user_config
 from app.tools.registry import REGISTRY, execute, Tier
+
+_llm_manager = LLMManager(OLLAMA_BASE_URL)
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -159,20 +162,11 @@ async def ollama_health() -> dict:
         "doc_model": doc_model,
         "doc_model_installed": False,
         "models_installed": [],
+        "hardware_profile": _llm_manager.hardware_profile(),
         "error": None,
     }
     try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            response = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
-            response.raise_for_status()
-            payload = response.json()
-        if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
-            raise ValueError("Ollama returned an invalid model list.")
-        installed_models = [
-            str(model.get("name", ""))
-            for model in payload["models"]
-            if isinstance(model, dict) and model.get("name")
-        ]
+        installed_models = await _llm_manager.get_installed_models()
         installed = {name.casefold() for name in installed_models}
         result["reachable"] = True
         result["models_installed"] = installed_models
@@ -207,6 +201,7 @@ async def setup_status(_: None = Depends(_require_api_token)):
         "voice_model_installed": health["voice_model_installed"],
         "doc_model": health["doc_model"],
         "doc_model_installed": health["doc_model_installed"],
+        "hardware_profile": health["hardware_profile"],
         "stt_ready": bool(getattr(stt_module, "_model", None)) or bundled_stt.is_dir(),
         "tts_online": tts_online,
         "error": health["error"],
@@ -527,6 +522,8 @@ class Session:
             "error": health["error"],
             "doc_model": health["doc_model"],
             "doc_model_installed": health["doc_model_installed"],
+            "models_installed": health.get("models_installed", []),
+            "hardware_profile": health.get("hardware_profile"),
         })
 
     async def report_llm_status(self) -> None:
@@ -709,6 +706,15 @@ async def ws_voice(ws: WebSocket) -> None:
         return
 
     session = Session(ws)
+    await session.send_json({
+        "type": "config",
+        "settings": {
+            "language": session.language,
+            "voice": session.voice_override or "",
+            "llm_model": session.model,
+            "stt_model": session.stt_model,
+        },
+    })
     await session.send_json({"type": "state", "state": "idle"})
     await session.push_llm_status()
     session.llm_status_task = asyncio.create_task(session.report_llm_status())

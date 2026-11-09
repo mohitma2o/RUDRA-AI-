@@ -87,15 +87,17 @@ export function useVoicePipeline() {
     let wsUrl = '';
     let token = '';
     let socket: WebSocket | null = null;
+    let settingsReady = false;
 
     const sendSettings = () => {
-      if (socket?.readyState === WebSocket.OPEN) {
+      if (socket?.readyState === WebSocket.OPEN && settingsReady) {
         socket.send(JSON.stringify({ type: 'config', ...useVoiceStore.getState().settings }));
       }
     };
 
     const connect = () => {
       if (!active) return;
+      settingsReady = false;
       socket = createVoiceSocket(wsUrl, token);
       wsRef.current = socket;
       let pendingAudioMeta: { turn: number; seq: number; lang: string } | null = null;
@@ -105,7 +107,6 @@ export function useVoicePipeline() {
         store.setConnected(true);
         store.setConnectionDownSince(null);
         store.setBackendConfigError('');
-        sendSettings();
       };
       socket.onclose = () => {
         const wasCurrentSocket = wsRef.current === socket;
@@ -121,6 +122,13 @@ export function useVoicePipeline() {
           const message = JSON.parse(event.data);
           const store = useVoiceStore.getState();
           switch (message.type) {
+            case 'config':
+              if (message.settings && typeof message.settings === 'object') {
+                store.updateSettings(message.settings);
+                settingsReady = true;
+                sendSettings();
+              }
+              break;
             case 'state':
               if (!player.isSpeaking) store.setState(message.state);
               break;
@@ -206,6 +214,17 @@ export function useVoicePipeline() {
   useEffect(() => {
     const capture = new AudioCapture();
     captureRef.current = capture;
+    capture.setMuted(useVoiceStore.getState().isMicMuted);
+
+    const unsubscribeMute = useVoiceStore.subscribe((store, previousStore) => {
+      if (store.isMicMuted === previousStore.isMicMuted) return;
+      capture.setMuted(store.isMicMuted);
+      clearUtterance();
+      preRollFramesRef.current = [];
+      preRollSamplesRef.current = 0;
+      store.setAudioLevel(0);
+      if (store.isMicMuted && store.state === 'listening') store.setState('idle');
+    });
 
     const onFrame = (input: Float32Array) => {
       const frame = new Float32Array(input);
@@ -222,6 +241,14 @@ export function useVoicePipeline() {
       }
       const threshold = Math.max(0.012, noiseFloorRef.current * 2.7);
       const store = useVoiceStore.getState();
+      if (store.isMicMuted) {
+        clearUtterance();
+        preRollFramesRef.current = [];
+        preRollSamplesRef.current = 0;
+        store.setAudioLevel(0);
+        if (store.state === 'listening') store.setState('idle');
+        return;
+      }
       store.setAudioLevel(Math.min(100, Math.round(rms * 400)));
 
       if (player.isSpeaking && rms > Math.max(0.05, threshold * 1.5)) interrupt();
@@ -266,6 +293,7 @@ export function useVoicePipeline() {
     });
 
     return () => {
+      unsubscribeMute();
       captureRef.current = null;
       clearUtterance();
       preRollFramesRef.current = [];

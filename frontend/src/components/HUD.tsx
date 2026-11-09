@@ -7,7 +7,7 @@ import { SetupNotice } from './SetupNotice';
 import { DocumentsWorkspace } from './DocumentsWorkspace';
 import { useVoicePipeline } from '../hooks/useVoicePipeline';
 import { useVoiceStore } from '../store/voiceStore';
-import { Settings, Send, X, Minus, Sparkles, FileText } from 'lucide-react';
+import { Settings, Send, X, Minus, Sparkles, FileText, Mic, MicOff } from 'lucide-react';
 
 export const HUD: React.FC = () => {
   const [inputText, setInputText] = useState('');
@@ -17,6 +17,7 @@ export const HUD: React.FC = () => {
     state, mode, backendStatus, backendMessage, backendConfigError,
     connectionDownSince, isConnected, errorNotice, setErrorNotice,
     setBackendConfigError, notesReady, setNotesReady,
+    isMicMuted, setMicMuted,
   } = useVoiceStore();
   const { interrupt, sendTextQuery, sendConfirmResponse, retryConnection } = useVoicePipeline();
   const [now, setNow] = useState(Date.now());
@@ -72,6 +73,19 @@ export const HUD: React.FC = () => {
 
         {/* Window action buttons */}
         <div className="flex items-center gap-1.5" data-no-drag>
+          <button
+            onClick={() => setMicMuted(!isMicMuted)}
+            className={`p-1.5 rounded-lg transition-colors ${
+              isMicMuted
+                ? 'text-rose-300 bg-rose-500/10 hover:bg-rose-500/20'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+            }`}
+            title={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
+            aria-label={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
+            aria-pressed={isMicMuted}
+          >
+            {isMicMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+          </button>
           <button
             onClick={() => setIsDocumentsOpen(true)}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors"

@@ -20,6 +20,7 @@ from hud import RudraHud
 from language import detect_language
 from llm import complete_ollama_tool_call, get_llm_backend, query_llm, query_ollama_with_tools, warm_up_ollama
 from memory.scriptures import query as query_scripture
+from state import state as app_state
 from stt import prepare_stt_calibration, transcribe_audio
 from tts import speak_text, stop_speaking
 from wakeword import start_wakeword_listener, stop_wakeword_listener
@@ -55,7 +56,6 @@ def _create_icon() -> Image.Image:
 class RudraTray:
     def __init__(self, config: dict[str, Any]):
         self.config = config
-        self.paused = False
         self._processing = False
         self._processing_lock = threading.Lock()
         self.icon = pystray.Icon(
@@ -65,7 +65,16 @@ class RudraTray:
             self._build_menu(),
         )
         self._listener_thread: threading.Thread | None = None
+        self._worker_thread: threading.Thread | None = None
         self.hud = RudraHud()
+
+    @property
+    def paused(self) -> bool:
+        return app_state.is_muted
+
+    @paused.setter
+    def paused(self, value: bool) -> None:
+        app_state.is_muted = value
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
@@ -85,7 +94,7 @@ class RudraTray:
         self._notify(f"Rudra is currently {status}.")
 
     def _toggle_pause(self, icon: Any, item: Any) -> None:
-        self.paused = not self.paused
+        app_state.is_muted = not app_state.is_muted
         state = "paused" if self.paused else "resumed"
         self._notify(f"Wake word listener {state}.")
 
@@ -95,7 +104,7 @@ class RudraTray:
         sys.exit(0)
 
     def _on_wake(self, phrase: str) -> None:
-        if self.paused:
+        if app_state.is_muted:
             return
 
         with self._processing_lock:
@@ -104,7 +113,25 @@ class RudraTray:
                 return
             self._processing = True
 
+        worker = threading.Thread(
+            target=self._process_wake,
+            args=(phrase,),
+            name="rudra-wake-worker",
+            daemon=True,
+        )
         try:
+            worker.start()
+            self._worker_thread = worker
+        except RuntimeError as exc:
+            with self._processing_lock:
+                self._processing = False
+            print(f"Could not start wake processing worker: {exc}")
+            self._notify(f"Could not start wake processing: {exc}")
+
+    def _process_wake(self, phrase: str) -> None:
+        try:
+            if app_state.is_muted:
+                return
             print(f"Wake word callback fired: {phrase}")
             self._notify("Rudra wake word detected. Listening now.")
             self.hud.set_state("listening")
@@ -188,7 +215,8 @@ class RudraTray:
                 self.hud.set_state("idle")
                 self._notify("Rudra has responded.")
         finally:
-            self._processing = False
+            with self._processing_lock:
+                self._processing = False
 
     def start(self) -> None:
         prepare_stt_calibration()

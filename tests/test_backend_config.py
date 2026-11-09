@@ -26,6 +26,17 @@ def test_legacy_user_model_setting_is_used_as_voice_model(monkeypatch, tmp_path)
     assert main._load_config()["ollama_voice_model"] == "legacy-user-model"
 
 
+def test_model_update_changes_active_session_and_persists(monkeypatch):
+    session = main.Session(None)
+    persisted = {}
+    monkeypatch.setattr(main, "save_user_config", persisted.update)
+
+    asyncio.run(session.update_config({"llm_model": "phi3:mini"}))
+
+    assert session.model == "phi3:mini"
+    assert persisted == {"ollama_voice_model": "phi3:mini"}
+
+
 def test_cancelled_turn_does_not_send_stale_idle_state(monkeypatch):
     async def blocked_turn(**_):
         await asyncio.Event().wait()

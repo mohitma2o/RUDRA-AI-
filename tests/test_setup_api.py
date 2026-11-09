@@ -93,17 +93,29 @@ def test_websocket_requires_authentication_and_a_local_origin(monkeypatch):
             "voice_model_installed": True,
             "doc_model": "qwen2.5:3b-instruct-q4_K_M",
             "doc_model_installed": True,
+            "models_installed": ["qwen2.5:1.5b", "phi3:mini"],
+            "hardware_profile": {
+                "tier": "low",
+                "ram_gb": 8.0,
+                "recommended_models": ["qwen2.5:1.5b", "phi3:mini"],
+                "basis": "System RAM only; GPU VRAM is not detected.",
+            },
             "error": None,
         }
 
     monkeypatch.setattr(backend_main, "ollama_health", healthy_ollama)
     with client.websocket_connect("/ws/voice", headers={"Origin": origin}) as websocket:
         websocket.send_json({"type": "auth", "token": _API_TOKEN})
+        assert websocket.receive_json()["type"] == "config"
         assert websocket.receive_json() == {"type": "state", "state": "idle"}
-        assert websocket.receive_json()["type"] == "llm_status"
+        llm_status = websocket.receive_json()
+        assert llm_status["type"] == "llm_status"
+        assert llm_status["models_installed"] == ["qwen2.5:1.5b", "phi3:mini"]
+        assert llm_status["hardware_profile"]["tier"] == "low"
 
     with client.websocket_connect("/ws/voice", headers={"Origin": "null"}) as websocket:
         websocket.send_json({"type": "auth", "token": _API_TOKEN})
+        assert websocket.receive_json()["type"] == "config"
         assert websocket.receive_json() == {"type": "state", "state": "idle"}
 
     with pytest.raises(WebSocketDisconnect):
@@ -138,6 +150,7 @@ def test_packaged_websocket_accepts_file_origin_and_missing_origin(monkeypatch):
     for headers in ({"Origin": "file://"}, {}):
         with client.websocket_connect("/ws/voice", headers=headers) as websocket:
             websocket.send_json({"type": "auth", "token": _API_TOKEN})
+            assert websocket.receive_json()["type"] == "config"
             assert websocket.receive_json()["type"] == "state"
             assert websocket.receive_json()["type"] == "llm_status"
 
