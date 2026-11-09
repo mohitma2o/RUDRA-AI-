@@ -5,8 +5,7 @@ from pathlib import Path
 RUDRA_DIR = Path(__file__).parents[1] / "rudra"
 sys.path.insert(0, str(RUDRA_DIR))
 
-from main import detect_language
-from tts import _choose_voice
+from language import _choose_voice, detect_language
 
 
 class LanguageFlowTests(unittest.TestCase):

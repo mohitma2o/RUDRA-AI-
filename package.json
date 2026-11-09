@@ -45,7 +45,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "rudra/tray_icon.ico"
+      "icon": "rudra/installer_icon.ico"
     },
     "nsis": {
       "oneClick": false,

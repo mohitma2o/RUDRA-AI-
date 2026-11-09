@@ -11,26 +11,10 @@ import winsound
 from pathlib import Path
 from typing import Optional
 
+from language import VOICE_MAP, _choose_voice
+
 _keep_temp_audio = False
 _ACTIVE_MCI_ALIAS: Optional[str] = None
-
-VOICE_MAP = {
-    "hi": "hi-IN-MadhurNeural",
-    "pa": "pa-IN-AmanNeural",
-    "en": "en-IN-PrabhatNeural",
-}
-
-
-def _choose_voice(language: str) -> str:
-    lang = (language or "").lower()
-    if lang.startswith("hi"):
-        return VOICE_MAP["hi"]
-    if lang.startswith("pa"):
-        return VOICE_MAP["pa"]
-    if lang.startswith("en"):
-        return VOICE_MAP["en"]
-    return VOICE_MAP["en"]
-
 
 def _run_async(coro):
     try:

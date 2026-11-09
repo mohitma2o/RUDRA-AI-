@@ -11,7 +11,7 @@
 ![Ollama](https://img.shields.io/badge/LLM-Ollama%20(Qwen%202.5)-black?logo=ollama)
 ![License](https://img.shields.io/badge/License-MIT-purple)
 
-**A high-performance, local voice assistant with a transparent glowing 3D HUD, real-time VAD, streaming speech synthesis, hardware automation, and instant barge-in.**
+**A Windows voice assistant with a transparent glowing 3D HUD, local speech recognition and reasoning, network-dependent neural speech, hardware automation, and barge-in controls.**
 
 </div>
 
@@ -19,9 +19,9 @@
 
 ## 🌟 Overview
 
-**Rudra** is an on-device, Jarvis-like desktop companion built for Windows. It combines the visual fluidity of an **Electron + React 18 HUD** with the low-latency power of a local **FastAPI** backend streaming **Ollama (Qwen 2.5)** and **faster-whisper**.
+**Rudra** is a Windows desktop companion built with an **Electron + React 18 HUD** and a local **FastAPI** backend. Speech recognition uses local **faster-whisper** models and responses use a separately installed local **Ollama** runtime. Speech synthesis prefers Microsoft's online Edge TTS service and falls back to local `pyttsx3`; Rudra is therefore not fully offline.
 
-Say **"Rudra"** (or press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd>) to activate. Rudra listens via browser Web Audio echo cancellation, transcribes locally, executes desktop tasks or streams responses word-by-word with natural multilingual text-to-speech.
+Say **"Rudra"** (or press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd>) to activate. Rudra captures audio with browser Web Audio echo cancellation, transcribes locally, executes desktop tasks, or streams responses with multilingual text-to-speech.
 
 ---
 
@@ -44,7 +44,7 @@ Say **"Rudra"** (or press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd>)
 │  • Fast-path Router: <150ms execution for volume, brightness, time     │
 │  • Tool Registry: Tier.AUTO vs Tier.CONFIRM security gate             │
 │  • LLM: Streaming Ollama queue -> regex sentence boundary splitter     │
-│  • TTS: edge-tts (IN-Prabhat, Madhur, Gagan) + pyttsx3 offline fallback│
+│  • TTS: Microsoft Edge TTS (online; reply text sent) + local fallback │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
            ┌────────────────────────┴────────────────────────┐
@@ -60,18 +60,25 @@ Say **"Rudra"** (or press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd>)
 
 ---
 
-## ⚡ Performance & Latency Benchmarks (WP7)
+## ⚡ Expected Voice Latency (Indicative)
 
-Optimized specifically for budget hardware targets (e.g., **Intel i3 10th Gen, 12 GB RAM**):
+These are rough planning estimates for entry-level hardware (for example,
+**Intel i3 10th Gen, 12 GB RAM**) with a warm local model, not benchmark
+results or guarantees. Cold model startup, device load, language, and the
+network-dependent Edge TTS request can make actual latency longer.
 
-| Pipeline Stage | Baseline (Sequential) | Rudra v2.0 (Streaming) | Speedup |
-|---|---|---|---|
-| **Audio VAD Endpointing** | 1,500 ms (fixed pause) | 450 ms (Web Audio RMS VAD) | **3.3x faster** |
-| **Wake Word & STT** | 1,500 ms (disk I/O) | 600–1,100 ms (direct PCM memory) | **1.8x faster** |
-| **Fast-path Hardware Actions** | 6,000–10,000 ms (via LLM) | 40–180 ms (regex bypass) | **30x–50x faster** |
-| **LLM to First Sentence** | 3,000–8,000 ms (blocking) | 800–1,800 ms (streaming queue) | **4x faster** |
-| **TTS First Audio Chunk** | 1,200–2,500 ms (full turn) | 250–600 ms (first sentence only) | **4x faster** |
-| **Total Time to First Word** | **~7,000–13,000 ms** | **~2,100–3,800 ms** | **~3.5x faster overall** |
+| Pipeline stage | Approximate latency |
+|---|---|
+| **VAD endpointing** | About 450 ms tail silence |
+| **Wake word and speech recognition** | 600–1,100 ms |
+| **Fast-path hardware actions** | 40–180 ms |
+| **Warm Ollama model to first sentence** | 800–1,800 ms |
+| **Edge TTS first audio chunk** | 250–600 ms when the service responds promptly |
+| **Total time to first word** | **About 2,100–4,000 ms** |
+
+Rudra sends timing events for individual voice turns so actual device behavior
+can be measured locally; the estimates above have not been independently
+benchmarked across supported hardware.
 
 ---
 
@@ -81,7 +88,7 @@ Optimized specifically for budget hardware targets (e.g., **Intel i3 10th Gen, 1
 - **⚡ Instant Barge-in Interruption:** Start speaking or click the 3D Orb while Rudra is speaking to immediately halt playback and begin a new query.
 - **🛡️ Two-Tier Safety System (`Tier.AUTO` vs `Tier.CONFIRM`):**
   - `Tier.AUTO`: Non-destructive queries (time, volume, brightness, screenshots) run immediately.
-  - `Tier.CONFIRM`: Destructive commands (power off, restart, sleep) pause and require user confirmation via voice or interactive HUD buttons.
+  - `Tier.CONFIRM`: Destructive commands (power off, restart, sleep) pause and show the requested tool and parameters in the HUD. The user must choose **Approve** or **Cancel**; the prompt expires after 20 seconds. Voice-only approval is not supported.
 - **🌐 Multilingual by Design:** Automatic script detection responds with native accents and neural voices:
   - **English (India):** `en-IN-PrabhatNeural`
   - **Hindi (Devanagari):** `hi-IN-MadhurNeural`
@@ -94,6 +101,21 @@ Optimized specifically for budget hardware targets (e.g., **Intel i3 10th Gen, 1
 Uploaded file copies are removed after text extraction. Extracted source text is
 kept in the local notes database so saved notes can be regenerated in another
 style.
+
+## 🔐 Privacy and Data Flow
+
+- Speech recognition runs with the local faster-whisper model. LLM requests are
+  sent to the local Ollama service (loopback by default); Ollama and its model
+  weights are separate prerequisites and are not bundled with Rudra.
+- Neural speech uses Microsoft's online Edge TTS service when available. The
+  text being spoken is sent to that service. If it is unavailable, Rudra uses
+  local `pyttsx3` speech when a usable system voice is installed; voice quality
+  and language support may differ.
+- Document text is summarized by local Ollama. The temporary uploaded file is
+  removed after extraction, but extracted source text is retained in the local
+  notes database for regeneration. By default, Windows runtime data is stored
+  under `%APPDATA%\Rudra AI`; deleting a note removes its saved source text.
+- Browser automation and model downloads require network access when used.
 
 ---
 
@@ -121,16 +143,20 @@ style.
 - **OS:** Windows 10 or 11 (64-bit)
 - **Node.js:** v20+ LTS
 - **Python:** v3.10 to v3.12
-- **Ollama:** [Download & install Ollama](https://ollama.com)
+- **Ollama:** [Download & install Ollama](https://ollama.com); it must be
+  installed separately and running for LLM replies and document notes.
 
-Pull the recommended lightweight voice model:
+The default voice model is `qwen2.5:1.5b`. The document model is
+`qwen2.5:3b-instruct-q4_K_M` (optional, about 2 GB). You can download the
+configured models from Rudra's setup notice or pull them manually:
 ```bash
 ollama pull qwen2.5:1.5b
+ollama pull qwen2.5:3b-instruct-q4_K_M
 ```
-*(For higher accuracy on machines with 16GB+ RAM, use `ollama pull qwen2.5:3b-instruct-q4_K_M`)*
 
 The voice assistant uses `ollama_voice_model` from `rudra/config.json`. The
-separate `ollama_doc_model` is loaded only when a document is summarized.
+separate `ollama_doc_model` is only needed for document notes. Ollama itself
+and model weights are not included in the Rudra installer.
 
 ### 2. Installation
 ```bash
@@ -207,9 +233,8 @@ RUDRA-AI-/
 │   └── tsconfig.json
 ├── frontend/               # React 18 UI
 │   ├── src/
-│   │   ├── components/     # Glowing Orb, Live Transcript, Metrics, SettingsModal, HUD
+│   │   ├── components/     # HUD, document workspace, transcript, metrics, and setup UI
 │   │   ├── hooks/          # useVoicePipeline (Web Audio VAD, barge-in, WebSocket)
-│   │   ├── components/     # HUD, document workspace, setup notice, and voice UI
 │   │   ├── store/          # Zustand voice store
 │   │   └── App.tsx
 │   ├── index.html

@@ -49,6 +49,7 @@ def test_document_job_map_reduces_and_persists_note(monkeypatch, tmp_path):
     calls = []
 
     async def summarize(text, model, *, style="brief", language="same", instructions=None, reduce=False):
+        assert not source.exists()
         calls.append((text, model, style, language, instructions, reduce))
         return "combined summary" if reduce else f"section {len(calls)}"
 

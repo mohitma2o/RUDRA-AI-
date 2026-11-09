@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw
 
 from agent import agent_response
 from hud import RudraHud
+from language import detect_language
 from llm import complete_ollama_tool_call, get_llm_backend, query_llm, query_ollama_with_tools, warm_up_ollama
 from memory.scriptures import query as query_scripture
 from stt import prepare_stt_calibration, transcribe_audio
@@ -26,17 +27,6 @@ from wakeword import start_wakeword_listener, stop_wakeword_listener
 CONFIG_PATH = Path(__file__).parent / "config.json"
 MODEL_PATH = Path(__file__).parent / "models" / "rudra.onnx"
 ICON_PATH = Path(__file__).parent / "tray_icon.ico"
-
-
-def detect_language(text: str) -> str:
-    """Infer the language of the transcription for the TTS voice selection."""
-    if not text:
-        return "en"
-    if any("\u0900" <= ch <= "\u097F" for ch in text):
-        return "hi"
-    if any("\u0A00" <= ch <= "\u0A7F" for ch in text):
-        return "pa"
-    return "en"
 
 
 def load_config() -> dict[str, Any]:

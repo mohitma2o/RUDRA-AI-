@@ -258,3 +258,24 @@
   `npm run build`, `npm run test:electron` (2 passed), and `git diff --check`.
 - Not yet verified: live Ollama summarization or native save/print dialogs in a
   packaged Windows desktop session.
+
+## Round 2 - Part 3: documentation, CI, and packaging
+
+- Corrected README claims about online Edge TTS, Ollama installation/model
+  requirements, HUD-only destructive-action approval, source-text retention,
+  and approximate (not benchmarked) latency ranges. Added the user-approved MIT
+  license notice.
+- Inspected the latest GitHub Actions run (42398899699, commit
+  `5fc129a`). Python test collection failed because `test_language.py` imported
+  the legacy tray entry point, which required `pystray`; moved language and
+  voice selection helpers into a lightweight module so the test no longer
+  imports tray startup. The existing CI build already type-checks frontend and
+  Electron code, so no duplicate `tsc --noEmit` step was added.
+- The first `npm run dist` attempt reached electron-builder but failed because
+  the configured Windows icon was only 64x64. Added a 256px multi-size installer
+  icon while preserving the original tray icon; the retry generated
+  `release/Rudra AI Setup 1.0.0.exe` successfully.
+- Verified `python -m pytest tests -q` (110 passed, 1 skipped, 16 subtests),
+  `npm run build` (also run by `npm run dist`), and `git diff --check`.
+- Not yet verified: installing or launching the generated unsigned installer,
+  a clean-machine Windows smoke test, live Ollama behavior, or physical audio.

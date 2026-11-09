@@ -261,6 +261,8 @@ async def _run_job(
             content_hash = await asyncio.to_thread(
                 lambda: hashlib.sha256(source_path.read_bytes()).hexdigest()
             )
+        if source_path is not None:
+            await asyncio.to_thread(source_path.unlink, missing_ok=True)
         await _process_text(
             job_id,
             filename,
