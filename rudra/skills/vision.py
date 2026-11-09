@@ -2,8 +2,17 @@
 
 from datetime import datetime
 from pathlib import Path
+import sys
+import time
 
 _PHOTO_DIR = Path.home() / "Pictures" / "Rudra"
+
+
+def _is_usable_frame(frame) -> bool:
+    try:
+        return frame is not None and int(frame.size) > 0 and float(frame.mean()) > 4.0
+    except (AttributeError, TypeError, ValueError):
+        return False
 
 
 def capture_photo(filename: str | None = None) -> str:
@@ -34,15 +43,38 @@ def capture_photo(filename: str | None = None) -> str:
         for camera_index in (0, 1, 2):
             camera = None
             try:
-                camera = cv2.VideoCapture(camera_index)
+                if sys.platform == "win32":
+                    camera = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+                else:
+                    camera = cv2.VideoCapture(camera_index)
                 if not camera.isOpened():
                     errors.append(f"camera index {camera_index}: OpenCV could not open the device")
                     continue
-                ret, frame = camera.read()
-                if ret and frame is not None:
-                    captured_frame = frame
+                warmup_failures = 0
+                for _ in range(20):
+                    ret, frame = camera.read()
+                    if not ret or frame is None:
+                        warmup_failures += 1
+                    time.sleep(0.03)
+                dark_frames = 0
+                failed_reads = 0
+                for _ in range(5):
+                    ret, frame = camera.read()
+                    if not ret or frame is None:
+                        failed_reads += 1
+                    elif not _is_usable_frame(frame):
+                        dark_frames += 1
+                    else:
+                        captured_frame = frame
+                        break
+                    time.sleep(0.03)
+                if captured_frame is not None:
                     break
-                errors.append(f"camera index {camera_index}: OpenCV opened the device but returned no frame")
+                errors.append(
+                    f"camera index {camera_index}: no usable frame after 20 warm-up frames "
+                    f"({warmup_failures} warm-up reads failed, {failed_reads} capture reads "
+                    f"failed, {dark_frames} nearly-black frames)"
+                )
             except Exception as exc:
                 errors.append(f"camera index {camera_index}: {type(exc).__name__}: {exc}")
             finally:
@@ -61,7 +93,10 @@ def capture_photo(filename: str | None = None) -> str:
             '"Let desktop apps access your camera" and turn it ON.'
         )
 
-    success = cv2.imwrite(str(path), captured_frame)
+    try:
+        success = cv2.imwrite(str(path), captured_frame)
+    except Exception as exc:
+        return f"Failed to save captured image: {type(exc).__name__}: {exc}"
     if not success:
         return "Failed to save captured image."
     return f"Captured photo to {path.resolve()}"

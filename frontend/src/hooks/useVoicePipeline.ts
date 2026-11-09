@@ -152,6 +152,12 @@ export function useVoicePipeline() {
               break;
             case 'llm_status':
               store.setLLMStatus(message);
+              if (message.engine_mode === 'CLOUD' || message.engine_mode === 'LOCAL') {
+                store.updateSettings({ engine_mode: message.engine_mode });
+              }
+              break;
+            case 'system_metrics':
+              store.setSystemMetrics(message);
               break;
             case 'error':
               store.setErrorNotice({ code: message.code, message: message.message || 'The request failed.' });
@@ -286,13 +292,37 @@ export function useVoicePipeline() {
       }
     };
 
-    void capture.start(onFrame).catch(async (error: unknown) => {
-      await capture.stop();
-      console.error('Microphone initialization failed:', error);
-      useVoiceStore.getState().setState('idle');
-    });
+    let captureActive = true;
+    let retryTimer: number | undefined;
+    const startCapture = async () => {
+      while (captureActive) {
+        try {
+          await capture.start(onFrame);
+          const store = useVoiceStore.getState();
+          if (store.errorNotice?.code === 'microphone_unavailable') store.setErrorNotice(null);
+          return;
+        } catch (error: unknown) {
+          await capture.stop();
+          if (!captureActive) return;
+          const detail = error instanceof Error ? error.message : String(error);
+          console.error('Microphone initialization failed:', detail);
+          useVoiceStore.getState().setErrorNotice({
+            code: 'microphone_unavailable',
+            message: `Microphone unavailable: ${detail}. Retrying in 3 seconds.`,
+          });
+          useVoiceStore.getState().setState('idle');
+          await new Promise<void>((resolve) => {
+            retryTimer = window.setTimeout(resolve, 3000);
+          });
+          retryTimer = undefined;
+        }
+      }
+    };
+    void startCapture();
 
     return () => {
+      captureActive = false;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
       unsubscribeMute();
       captureRef.current = null;
       clearUtterance();

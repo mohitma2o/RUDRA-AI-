@@ -289,8 +289,8 @@ function createWindow(): void {
     ? path.resolve(__dirname, '../../rudra/tray_icon.ico')
     : path.join(process.resourcesPath, 'tray_icon.ico');
   mainWindow = new BrowserWindow({
-    width: 440,
-    height: 640,
+    width: 560,
+    height: 820,
     show: false,
     frame: false,
     transparent: true,

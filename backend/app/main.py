@@ -7,6 +7,7 @@ Spawned by the Electron main process; run directly with:
 
 import asyncio
 from contextlib import asynccontextmanager
+import datetime
 import hashlib
 import json
 import os
@@ -24,10 +25,12 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket, We
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
 # Ensure both backend/ and repo root are in sys.path
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(_REPO_ROOT / ".env")
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 if str(_REPO_ROOT) not in sys.path:
@@ -36,6 +39,7 @@ if str(_REPO_ROOT) not in sys.path:
 from app.voice import stt as stt_module
 from app.voice.pipeline import VOICES, run_turn, script_lang, synth
 from app.voice.wake import find_wake, strip_wake
+from rudra.identity import check_creator_query, creator_response_language
 from app.documents import router as documents_router, shutdown_document_jobs
 from app.llm_manager import LLMManager
 from app.ollama import OLLAMA_BASE_URL
@@ -43,10 +47,39 @@ from app.tools import hardware as _hardware_tools  # noqa: F401
 from app.tools import browser as _browser_tools    # noqa: F401
 from app.tools import applications as _application_tools  # noqa: F401
 from app.tools import files as _file_tools  # noqa: F401
+from app.tools import vision as _vision_tools  # noqa: F401
 from .paths import data_dir, load_config, resource_dir, save_user_config
 from app.tools.registry import REGISTRY, execute, Tier
 
-_llm_manager = LLMManager(OLLAMA_BASE_URL)
+_initial_config = load_config()
+_llm_manager = LLMManager(
+    OLLAMA_BASE_URL,
+    api_key=os.getenv("GEMINI_API_KEY") or _initial_config.get("gemini_api_key"),
+    mode=_initial_config.get("llm_engine_mode", "CLOUD"),
+)
+_startup_greeting_sent = False
+
+
+def _startup_greeting_text(hour: int, language: str) -> tuple[str, str]:
+    engine = "Gemini Cloud Mode" if _llm_manager.mode == "CLOUD" else "Local mode"
+    if language.startswith("hi"):
+        greeting = "सुप्रभात" if hour < 12 else "शुभ दोपहर" if hour < 17 else "शुभ संध्या"
+        return (
+            f"नमस्कार! {greeting}। Rudra {engine} में ऑनलाइन है और आपकी मदद के लिए तैयार है। बताइए, आज क्या करना है?",
+            "hi",
+        )
+    if language.startswith("pa"):
+        greeting = "ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ, ਸ਼ੁਭ ਸਵੇਰ" if hour < 12 else "ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ, ਸ਼ੁਭ ਦੁਪਹਿਰ" if hour < 17 else "ਸਤਿ ਸ਼੍ਰੀ ਅਕਾਲ, ਸ਼ੁਭ ਸ਼ਾਮ"
+        return (
+            f"{greeting}! Rudra {engine} ਵਿੱਚ ਆਨਲਾਈਨ ਹੈ ਅਤੇ ਮਦਦ ਲਈ ਤਿਆਰ ਹੈ। ਦੱਸੋ, ਅੱਜ ਕੀ ਕਰੀਏ?",
+            "pa",
+        )
+
+    time_greeting = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
+    return (
+        f"Namaskar! {time_greeting}. Rudra is online in {engine}. How may I help you today?",
+        "en",
+    )
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -71,6 +104,11 @@ _PACKAGED_ORIGINS = ("file://", "null")
 _IS_DEV = os.environ.get("RUDRA_DEV") == "1"
 _ALLOWED_ORIGINS = (*_DEV_ORIGINS, *_PACKAGED_ORIGINS) if _IS_DEV else _PACKAGED_ORIGINS
 
+
+def _websocket_origin_allowed(origin: Optional[str]) -> bool:
+    return origin in _ALLOWED_ORIGINS or (not _IS_DEV and origin is None)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(_ALLOWED_ORIGINS),
@@ -86,6 +124,10 @@ app.add_middleware(
 async def _startup() -> None:
     # Load & warm STT in background thread
     threading.Thread(target=stt_module.warm_up, daemon=True).start()
+
+    if _llm_manager.mode != "LOCAL":
+        print("[LLM] Skipping Ollama warm-up in Gemini Cloud mode.")
+        return
 
     # Warm up Ollama (keep model resident in RAM)
     async def _warm_ollama():
@@ -163,6 +205,8 @@ async def ollama_health() -> dict:
         "doc_model_installed": False,
         "models_installed": [],
         "hardware_profile": _llm_manager.hardware_profile(),
+        "gemini_configured": _llm_manager.gemini_configured,
+        "engine_mode": _llm_manager.mode,
         "error": None,
     }
     try:
@@ -204,8 +248,33 @@ async def setup_status(_: None = Depends(_require_api_token)):
         "hardware_profile": health["hardware_profile"],
         "stt_ready": bool(getattr(stt_module, "_model", None)) or bundled_stt.is_dir(),
         "tts_online": tts_online,
+        "gemini_configured": _llm_manager.gemini_configured,
+        "engine_mode": _llm_manager.mode,
         "error": health["error"],
     }
+
+
+class GeminiApiKeyRequest(BaseModel):
+    api_key: str
+
+
+@app.post("/api/settings/gemini-key")
+async def save_gemini_api_key(
+    request: GeminiApiKeyRequest,
+    _: None = Depends(_require_api_token),
+):
+    api_key = request.api_key.strip()
+    if not LLMManager.is_valid_api_key(api_key):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Gemini API keys must contain 6 to 512 non-whitespace characters."
+            ),
+        )
+
+    save_user_config({"gemini_api_key": api_key})
+    _llm_manager.set_api_key(api_key)
+    return {"configured": True}
 
 
 class SetupModelRequest(BaseModel):
@@ -273,6 +342,35 @@ def _named_arg(match: re.Match) -> dict:
 FAST_PATH_RULES: list[tuple[re.Pattern, str, Callable[[re.Match], dict]]] = [
     (
         re.compile(
+            r"(?:open|launch|start)(?: the)? camera and "
+            r"(?:take|capture|snap|click) (?:a )?(?:photo|picture|image)[.!?]?"
+        ),
+        "capture_photo",
+        _empty_args,
+    ),
+    (
+        re.compile(r"(?:take|capture|snap|click) (?:a )?(?:photo|picture|image)[.!?]?"),
+        "capture_photo",
+        _empty_args,
+    ),
+    (
+        re.compile(
+            r"(?:what(?:'s| is) on (?:my )?screen|"
+            r"(?:explain|describe|summarize) (?:what(?:'s| is) on (?:my )?)?screen)[.!?]?"
+        ),
+        "analyze_screen",
+        _empty_args,
+    ),
+    (
+        re.compile(
+            r"(?:summarize|explain|read) (?:the )?"
+            r"(?:(?:text on )?(?:my )?clipboard|copied text|text i copied)[.!?]?"
+        ),
+        "summarize_clipboard",
+        _empty_args,
+    ),
+    (
+        re.compile(
             r"(?:what time is it|what(?:'s| is) the time|current time|"
             r"tell me the time|what date|what is today's date)[.!?]?"
         ),
@@ -318,12 +416,12 @@ FAST_PATH_RULES: list[tuple[re.Pattern, str, Callable[[re.Match], dict]]] = [
         lambda _: {"action": "prev"},
     ),
     (
-        re.compile(r"(?:set )?volume (?:to )?(\d+)[.!?]?"),
+        re.compile(r"(?:set )?volume (?:to )?(\d+)(?:\s*(?:%|percent))?[.!?]?"),
         "volume_set",
         lambda m: {"level": int(m.group(1))},
     ),
     (
-        re.compile(r"(?:set )?brightness (?:to )?(\d+)[.!?]?"),
+        re.compile(r"(?:set )?brightness (?:to )?(\d+)(?:\s*(?:%|percent))?[.!?]?"),
         "brightness_set",
         lambda m: {"level": int(m.group(1))},
     ),
@@ -402,11 +500,30 @@ FAST_PATH_RULES: list[tuple[re.Pattern, str, Callable[[re.Match], dict]]] = [
         _named_arg,
     ),
     (
+        re.compile(r"(?:open|launch|start)(?: the)? (.+?)[.!?]?"),
+        "open_application",
+        _named_arg,
+    ),
+    (
         re.compile(r"play\s+(.+?)(?:\s+on youtube)?[.!?]?"),
         "play_youtube",
         lambda m: {"query": m.group(1).strip(" .!?")},
     ),
 ]
+
+
+ENGINE_MODE_COMMANDS = (
+    (re.compile(r"(?:rudra[,]?\s+)?(?:switch to cloud(?: mode)?|use gemini)[.!?]?"), "CLOUD"),
+    (re.compile(r"(?:rudra[,]?\s+)?(?:switch to local(?: mode)?|use ollama)[.!?]?"), "LOCAL"),
+)
+
+
+def match_engine_mode_command(raw: str) -> Optional[str]:
+    text = raw.lower().strip()
+    for pattern, mode in ENGINE_MODE_COMMANDS:
+        if pattern.fullmatch(text):
+            return mode
+    return None
 
 
 def match_fast_path(raw: str) -> Optional[tuple[str, dict]]:
@@ -434,6 +551,7 @@ class Session:
         self.send_lock = asyncio.Lock()
         self.pending_confirm: Optional[asyncio.Future] = None
         self.llm_status_task: Optional[asyncio.Task] = None
+        self.system_metrics_task: Optional[asyncio.Task] = None
 
         # Settings (can be updated via 'config' messages)
         cfg = _load_config()
@@ -469,9 +587,16 @@ class Session:
         finally:
             self.pending_confirm = None
 
-    async def speak_direct_reply(self, reply_text: str, user_lang: str) -> None:
+    async def speak_direct_reply(
+        self,
+        reply_text: str,
+        user_lang: str,
+        *,
+        interrupt_current: bool = True,
+    ) -> None:
         """Speak a direct result without running Ollama."""
-        await self.interrupt()
+        if interrupt_current:
+            await self.interrupt()
         self.turn_no += 1
         turn = self.turn_no
         self.history.append({"role": "assistant", "content": reply_text})
@@ -524,12 +649,26 @@ class Session:
             "doc_model_installed": health["doc_model_installed"],
             "models_installed": health.get("models_installed", []),
             "hardware_profile": health.get("hardware_profile"),
+            "gemini_configured": _llm_manager.gemini_configured,
+            "engine_mode": _llm_manager.mode,
         })
 
     async def report_llm_status(self) -> None:
         while True:
             await asyncio.sleep(10)
             await self.push_llm_status()
+
+    async def push_system_metrics(self) -> None:
+        metrics = await asyncio.to_thread(_hardware_tools.get_system_metrics)
+        await self.send_json({"type": "system_metrics", **metrics})
+
+    async def report_system_metrics(self) -> None:
+        while True:
+            await asyncio.sleep(2)
+            try:
+                await self.push_system_metrics()
+            except Exception as exc:
+                print(f"[Metrics] System telemetry update failed: {exc}")
 
     async def send_bytes(self, data: bytes) -> None:
         try:
@@ -564,6 +703,7 @@ class Session:
                 turn=turn,
                 voice_override=self.voice_override,
                 send_lock=self.send_lock,
+                llm_manager=_llm_manager,
             )
         )
 
@@ -618,6 +758,14 @@ class Session:
         if not command_text.strip():
             command_text = text
 
+        engine_mode = match_engine_mode_command(command_text)
+        if engine_mode:
+            await self.change_engine_mode(engine_mode, lang)
+            return
+
+        if await self.respond_to_creator_query(command_text, lang):
+            return
+
         # Fast-path intent matching before hitting LLM
         fast_match = match_fast_path(command_text)
         if fast_match:
@@ -626,7 +774,12 @@ class Session:
                 tool_name,
                 tool_args,
                 confirm=self.ask_confirm,
-                context={"notify": self.send_json},
+                context={
+                    "notify": self.send_json,
+                    "llm_manager": _llm_manager,
+                    "model": self.model,
+                    "language": lang,
+                },
             )
             await self.speak_direct_reply(result_text, lang)
             return
@@ -641,6 +794,14 @@ class Session:
         lang = script_lang(text, "en")
         await self.send_json({"type": "transcript", "text": text, "lang": lang})
 
+        engine_mode = match_engine_mode_command(text)
+        if engine_mode:
+            await self.change_engine_mode(engine_mode, lang)
+            return
+
+        if await self.respond_to_creator_query(text, lang):
+            return
+
         # Fast-path intent matching before hitting LLM
         fast_match = match_fast_path(text)
         if fast_match:
@@ -649,12 +810,27 @@ class Session:
                 tool_name,
                 tool_args,
                 confirm=self.ask_confirm,
-                context={"notify": self.send_json},
+                context={
+                    "notify": self.send_json,
+                    "llm_manager": _llm_manager,
+                    "model": self.model,
+                    "language": lang,
+                },
             )
             await self.speak_direct_reply(result_text, lang)
             return
 
         await self.start_turn(text, lang)
+
+    async def respond_to_creator_query(self, text: str, language: str) -> bool:
+        matched, reply = check_creator_query(text)
+        if not matched:
+            return False
+        response_language = creator_response_language(text, language)
+        await self.interrupt()
+        self.history.append({"role": "user", "content": text})
+        await self.speak_direct_reply(reply, response_language, interrupt_current=False)
+        return True
 
     async def update_config(self, cfg: dict) -> None:
         persisted = {}
@@ -671,8 +847,27 @@ class Session:
         if "llm_model" in cfg:
             self.model = cfg["llm_model"]
             persisted["ollama_voice_model"] = cfg["llm_model"]
+        if "engine_mode" in cfg:
+            success, message = await _llm_manager.switch_mode(str(cfg["engine_mode"]))
+            if success:
+                persisted["llm_engine_mode"] = _llm_manager.mode
+            else:
+                await self.send_json({
+                    "type": "error",
+                    "code": "engine_mode_unavailable",
+                    "message": message,
+                })
         if persisted:
             save_user_config(persisted)
+        if "engine_mode" in cfg:
+            await self.push_llm_status()
+
+    async def change_engine_mode(self, mode: str, language: str) -> None:
+        success, message = await _llm_manager.switch_mode(mode)
+        if success:
+            save_user_config({"llm_engine_mode": _llm_manager.mode})
+            await self.push_llm_status()
+        await self.speak_direct_reply(message, language)
 
 
 # ---------------------------------------------------------------------------
@@ -681,8 +876,9 @@ class Session:
 
 @app.websocket("/ws/voice")
 async def ws_voice(ws: WebSocket) -> None:
+    global _startup_greeting_sent
     origin = ws.headers.get("origin")
-    if origin not in _ALLOWED_ORIGINS and not (not _IS_DEV and origin is None):
+    if not _websocket_origin_allowed(origin):
         print(f"[WS] Rejected origin {origin!r}; closing with code 1008.")
         await ws.close(code=1008)
         return
@@ -706,6 +902,9 @@ async def ws_voice(ws: WebSocket) -> None:
         return
 
     session = Session(ws)
+    greet_on_connection = not _startup_greeting_sent
+    if greet_on_connection:
+        _startup_greeting_sent = True
     await session.send_json({
         "type": "config",
         "settings": {
@@ -713,11 +912,39 @@ async def ws_voice(ws: WebSocket) -> None:
             "voice": session.voice_override or "",
             "llm_model": session.model,
             "stt_model": session.stt_model,
+            "engine_mode": _llm_manager.mode,
         },
     })
     await session.send_json({"type": "state", "state": "idle"})
-    await session.push_llm_status()
     session.llm_status_task = asyncio.create_task(session.report_llm_status())
+    session.system_metrics_task = asyncio.create_task(session.report_system_metrics())
+    if greet_on_connection:
+        greeting, greeting_language = _startup_greeting_text(
+            datetime.datetime.now().hour,
+            session.language,
+        )
+        greeting_task = asyncio.create_task(
+            session.speak_direct_reply(
+                greeting,
+                greeting_language,
+                interrupt_current=False,
+            )
+        )
+        session.task = greeting_task
+
+        def retry_greeting_if_interrupted(task: asyncio.Task) -> None:
+            global _startup_greeting_sent
+            if task.cancelled():
+                _startup_greeting_sent = False
+
+        greeting_task.add_done_callback(retry_greeting_if_interrupted)
+    if _llm_manager.mode == "CLOUD" and not _llm_manager.gemini_configured:
+        await session.send_json({
+            "type": "error",
+            "code": "cloud_key_missing",
+            "message": "Gemini API key is missing. Add one in Settings to use Cloud mode, or switch to Local mode.",
+        })
+    asyncio.create_task(session.push_llm_status())
     pending_meta: Optional[dict] = None  # metadata frame waiting for binary
 
     try:
@@ -764,6 +991,9 @@ async def ws_voice(ws: WebSocket) -> None:
         if session.llm_status_task:
             session.llm_status_task.cancel()
             await asyncio.gather(session.llm_status_task, return_exceptions=True)
+        if session.system_metrics_task:
+            session.system_metrics_task.cancel()
+            await asyncio.gather(session.system_metrics_task, return_exceptions=True)
         await session.interrupt()
 
 

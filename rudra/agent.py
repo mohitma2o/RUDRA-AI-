@@ -346,6 +346,12 @@ def agent_response(
     language: Optional[str] = None,
 ) -> str:
     """Prefer native model tool calls, retaining regex dispatch as a fallback."""
+    from rudra.identity import check_creator_query
+
+    is_creator_query, creator_reply = check_creator_query(prompt)
+    if is_creator_query:
+        return creator_reply
+
     model_message = None
     model_content = ""
     if tool_call_fn:

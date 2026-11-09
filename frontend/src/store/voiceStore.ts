@@ -14,6 +14,8 @@ export interface LLMStatus {
   reachable: boolean;
   model: string;
   installed: boolean;
+  gemini_configured?: boolean;
+  engine_mode?: 'CLOUD' | 'LOCAL';
   error?: string | null;
   doc_model?: string;
   doc_model_installed?: boolean;
@@ -30,6 +32,13 @@ export interface VoiceStatus {
   sttReady: boolean;
   ttsOnline: boolean;
   error?: string | null;
+}
+
+export interface SystemMetrics {
+  cpu_percent: number;
+  memory_percent: number;
+  memory_used_gb: number;
+  memory_total_gb: number;
 }
 
 export interface NotesReady {
@@ -60,6 +69,7 @@ export interface VoiceStore {
   connectionDownSince: number | null;
   llmStatus: LLMStatus | null;
   voiceStatus: VoiceStatus | null;
+  systemMetrics: SystemMetrics | null;
   errorNotice: { code?: string; message: string } | null;
   notesReady: NotesReady | null;
   audioLevel: number;
@@ -71,6 +81,7 @@ export interface VoiceStore {
     voice: string;
     llm_model: string;
     stt_model: string;
+    engine_mode: 'CLOUD' | 'LOCAL';
   };
 
   setState: (state: VoiceState) => void;
@@ -85,6 +96,7 @@ export interface VoiceStore {
   setConnectionDownSince: (timestamp: number | null) => void;
   setLLMStatus: (status: LLMStatus) => void;
   setVoiceStatus: (status: VoiceStatus) => void;
+  setSystemMetrics: (metrics: SystemMetrics) => void;
   setErrorNotice: (notice: { code?: string; message: string } | null) => void;
   setNotesReady: (notice: NotesReady | null) => void;
   setAudioLevel: (level: number) => void;
@@ -109,6 +121,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   connectionDownSince: null,
   llmStatus: null,
   voiceStatus: null,
+  systemMetrics: null,
   errorNotice: null,
   notesReady: null,
   audioLevel: 0,
@@ -120,6 +133,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
     voice: '',
     llm_model: 'qwen2.5:1.5b',
     stt_model: 'base',
+    engine_mode: 'CLOUD',
   },
 
   setState: (state) => set({ state }),
@@ -173,6 +187,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   setConnectionDownSince: (connectionDownSince) => set({ connectionDownSince }),
   setLLMStatus: (llmStatus) => set({ llmStatus }),
   setVoiceStatus: (voiceStatus) => set({ voiceStatus }),
+  setSystemMetrics: (systemMetrics) => set({ systemMetrics }),
   setErrorNotice: (errorNotice) => set({ errorNotice }),
   setNotesReady: (notesReady) => set({ notesReady }),
   setAudioLevel: (audioLevel) => set({ audioLevel }),

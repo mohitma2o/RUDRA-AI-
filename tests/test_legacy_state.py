@@ -103,7 +103,53 @@ def test_fallback_wake_loop_skips_recording_while_muted(monkeypatch):
         types.SimpleNamespace(WhisperModel=FakeWhisperModel),
     )
     monkeypatch.setattr(wakeword, "_stop_event", stop_event)
-    monkeypatch.setattr(wakeword.time, "sleep", lambda _seconds: stop_event.set())
+    monkeypatch.setattr(stop_event, "wait", lambda _seconds: stop_event.set())
     monkeypatch.setattr(state, "is_muted", True)
 
     wakeword._speech_recognition_loop(lambda _: None)
+
+
+def test_input_stream_prefers_default_microphone_and_logs_device(monkeypatch, capsys):
+    class FakePyAudio:
+        def __init__(self):
+            self.options = None
+
+        def get_default_input_device_info(self):
+            return {"index": 4, "name": "USB microphone"}
+
+        def open(self, **options):
+            self.options = options
+            return "stream"
+
+    pa = FakePyAudio()
+    pyaudio_module = types.SimpleNamespace(paInt16=8)
+
+    result = wakeword._open_input_stream(pa, pyaudio_module, rate=16000, chunk=1280)
+
+    assert result == "stream"
+    assert pa.options["input_device_index"] == 4
+    assert "USB microphone (device 4)" in capsys.readouterr().out
+
+
+def test_listener_worker_retries_after_audio_errors(monkeypatch, capsys):
+    stop_event = threading.Event()
+    calls = []
+
+    def broken_listener(*_):
+        calls.append("retry")
+        if len(calls) == 1:
+            raise OSError("device disconnected")
+        stop_event.set()
+
+    monkeypatch.setattr(wakeword, "_stop_event", stop_event)
+    monkeypatch.setattr(wakeword, "_LISTENER_RETRY_SECONDS", 0)
+    monkeypatch.setattr(wakeword, "_speech_recognition_loop", broken_listener)
+
+    wakeword._listener_worker(lambda _: None)
+
+    assert len(calls) == 2
+    assert "OSError: device disconnected" in capsys.readouterr().out
+
+
+def test_app_state_starts_unmuted():
+    assert AppState().is_muted is False

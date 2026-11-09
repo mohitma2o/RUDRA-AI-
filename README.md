@@ -11,7 +11,7 @@
 ![Ollama](https://img.shields.io/badge/LLM-Ollama%20(Qwen%202.5)-black?logo=ollama)
 ![License](https://img.shields.io/badge/License-MIT-purple)
 
-**A Windows voice assistant with a transparent glowing 3D HUD, local speech recognition and reasoning, network-dependent neural speech, hardware automation, and barge-in controls.**
+**A Windows voice assistant with a futuristic cyan ARC HUD, local speech recognition and reasoning, network-dependent neural speech, desktop automation, and live system telemetry.**
 
 </div>
 
@@ -19,7 +19,7 @@
 
 ## 🌟 Overview
 
-**Rudra** is a Windows desktop companion built with an **Electron + React 18 HUD** and a local **FastAPI** backend. Speech recognition uses local **faster-whisper** models and responses use a separately installed local **Ollama** runtime. Speech synthesis prefers Microsoft's online Edge TTS service and falls back to local `pyttsx3`; Rudra is therefore not fully offline.
+**Rudra** is a Windows desktop companion built with an **Electron + React 18 HUD** and a local **FastAPI** backend. Speech recognition uses local **faster-whisper** models. New installs default to **Gemini 2.5 Flash** Cloud mode to avoid warming a local LLM at launch; the saved engine choice is respected on later launches. Select either Gemini Cloud or a separately installed local **Ollama** runtime. Cloud failures are surfaced without silently switching providers; three consecutive Gemini failures open a 30-second circuit breaker. Switching to Local checks Ollama within three seconds and leaves the current mode unchanged if it is unavailable. Speech synthesis prefers Microsoft's online Edge TTS service and falls back to local **Kokoro-82M** for English and Hindi, then Windows/system voices (including Punjabi where installed). Edge TTS is online, so Rudra is not fully offline.
 
 Say **"Rudra"** (or press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd>) to activate. Rudra captures audio with browser Web Audio echo cancellation, transcribes locally, executes desktop tasks, or streams responses with multilingual text-to-speech.
 
@@ -43,8 +43,8 @@ Say **"Rudra"** (or press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Space</kbd>)
 │  • Wake Word: Multilingual fuzzy token matcher (rapidfuzz)             │
 │  • Fast-path Router: <150ms execution for volume, brightness, time     │
 │  • Tool Registry: Tier.AUTO vs Tier.CONFIRM security gate             │
-│  • LLM: Streaming Ollama queue -> regex sentence boundary splitter     │
-│  • TTS: Microsoft Edge TTS (online; reply text sent) + local fallback │
+│  • LLM: selected Gemini Cloud or streaming local Ollama                 │
+│  • TTS: Edge Neural online -> Kokoro local -> system voice fallback    │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
            ┌────────────────────────┴────────────────────────┐
@@ -90,13 +90,30 @@ benchmarked across supported hardware.
   - `Tier.AUTO`: Non-destructive queries (time, volume, brightness, screenshots) run immediately.
   - `Tier.CONFIRM`: Destructive commands (power off, restart, sleep) pause and show the requested tool and parameters in the HUD. The user must choose **Approve** or **Cancel**; the prompt expires after 20 seconds. Voice-only approval is not supported.
 - **🌐 Multilingual by Design:** Automatic script detection responds with native accents and neural voices:
-  - **English:** `en-US-SteffanNeural`
-  - **Hindi (Devanagari):** `hi-IN-MadhurNeural`
+  - **English:** `en-IN-NeerjaNeural`
+  - **Hindi (Devanagari):** `hi-IN-SwaraNeural`
   - **Punjabi (Gurmukhi):** `pa-IN-GurpreetNeural`
+- **🪪 Creator identity:** English, Hindi/Hinglish, and Punjabi questions about
+  who created Rudra receive a deterministic response crediting Mohit Mattoo,
+  before either the cloud or local language model is called.
+- **☁️ Optional Gemini replies:** Configure a key in Settings or provide
+  `GEMINI_API_KEY` in the repository-root `.env` file. New installs start in
+  Gemini Cloud mode; a previously saved engine choice is retained. Gemini is
+  used for assistant replies only when Cloud mode is selected; Cloud errors are shown
+  and spoken without silently switching to Ollama. After three consecutive
+  Gemini failures, requests pause for 30 seconds before a retry. Switch modes
+  from the HUD header or by saying “switch to cloud mode” / “switch to local
+  mode.”
+- **🗣️ Speech interruption:** Speak while Rudra is talking to stop playback
+  and submit your interruption; the renderer's existing VAD handles barge-in
+  without opening a second microphone listener.
 - **🎤 Instant microphone mute:** The HUD mute control disables microphone capture and clears buffered audio; typed requests remain available while muted.
 - **🧠 Hardware-aware Ollama selection:** The settings menu lists installed Ollama models and recommends Low, Mid, or High profiles based on system RAM. GPU VRAM is not currently inspected.
 - **🎬 Autonomous Media Control:** Playwright browser automation with persistent context (`.rudra/browser/`) searches and auto-plays songs/videos on YouTube without repetitive sign-ins.
-- **🖥️ Desktop & Hardware Automation:** Control master system volume, screen brightness, take timestamped screenshots to `~/Pictures/Rudra/`, and lock your Windows workstation.
+- **🖥️ Deterministic Desktop Controls:** Exact voice intents route app launches, camera capture, volume, brightness, screenshots, and lock-screen requests directly to their registered tools instead of asking the language model to claim it performed them.
+- **👁️ Clipboard & Screen Assistance:** Explicitly request a clipboard summary or screen explanation. Clipboard/screen content is sent only to local Ollama; screen analysis requires an installed Ollama vision model such as `qwen2.5vl:3b`.
+- **📊 Live HUD Telemetry:** The cyan ARC interface displays live CPU/RAM use and the active Ollama model.
+- **📜 Vichar of the Day:** A daily Bhagavad Gita verse with a short, labeled practical paraphrase.
 - **📂 Scoped File Access:** Search, open, and read files only inside Desktop, Documents, Downloads, Pictures, Music, or Videos. App closing requires confirmation.
 - **📄 Document Workspace:** Summarize TXT, Markdown, PDF, DOCX, and PPTX files with the on-demand local document model; follow progress, manage and regenerate seven styles of notes, and export Markdown, text, Word, PDF, or flashcard JSON.
 
@@ -106,13 +123,26 @@ style.
 
 ## 🔐 Privacy and Data Flow
 
-- Speech recognition runs with the local faster-whisper model. LLM requests are
-  sent to the local Ollama service (loopback by default); Ollama and its model
-  weights are separate prerequisites and are not bundled with Rudra.
+- Speech recognition runs with the local faster-whisper model. In Cloud mode,
+  assistant conversation text and recent conversation history are sent to
+  Google's Gemini API. A Cloud request failure does not switch providers;
+  switch to Local mode explicitly to use Ollama (loopback by default).
+  New installs default to Cloud mode; an explicitly saved engine choice is
+  retained on later starts. Ollama is not warmed while Cloud mode is active,
+  and selecting Local checks its API within three seconds.
+  Keys entered in Settings are stored in Rudra's per-user config under
+  `%APPDATA%\Rudra AI`; they are not returned to the HUD or written to the
+  repository.
+- Document text, clipboard content, and screen images continue to use local
+  Ollama. Ollama and its model weights are separate prerequisites and are not
+  bundled with Rudra.
 - Neural speech uses Microsoft's online Edge TTS service when available. The
   text being spoken is sent to that service. If it is unavailable, Rudra uses
-  local `pyttsx3` speech when a usable system voice is installed; voice quality
-  and language support may differ.
+  the local Kokoro-82M model for English and Hindi when its model files are
+  available, then `pyttsx3` and an installed system voice. Kokoro weights may
+  need to download the first time and are cached locally. Kokoro does not
+  currently provide Punjabi voices, so offline Punjabi speech depends on an
+  installed Punjabi system voice and may not be available on every device.
 - Document text is summarized by local Ollama. The temporary uploaded file is
   removed after extraction, but extracted source text is retained in the local
   notes database for regeneration. By default, Windows runtime data is stored
@@ -136,6 +166,7 @@ style.
 | **Folders / Apps** | *"Open my Documents folder"*, *"Open app Notepad"*, *"Close app Notepad"* | `open_folder`, `open_application`; closing requires confirmation |
 | **Power (Safety Gate)**| *"Shutdown computer"*, *"Restart the PC"*, *"Sleep computer"* | Requires Approval (`Tier.CONFIRM`) |
 | **Power Abort** | *"Cancel shutdown"*, *"Abort restart"* | `cancel_shutdown` |
+| **LLM Engine** | *"Switch to cloud mode"*, *"Switch to local mode"* | Gemini 2.5 Flash / local Ollama |
 
 ---
 
@@ -146,7 +177,13 @@ style.
 - **Node.js:** v20+ LTS
 - **Python:** v3.10 to v3.12
 - **Ollama:** [Download & install Ollama](https://ollama.com); it must be
-  installed separately and running for LLM replies and document notes.
+  installed separately and running for local fallback replies, document notes,
+  clipboard summaries, and screen analysis.
+- **Optional Gemini API key:** Put `GEMINI_API_KEY=...` in the repository-root
+  `.env` file or enter it in the HUD's Settings. Voice replies use Gemini when
+  Cloud mode is selected; request failures are surfaced instead of falling back
+  to Ollama. Choose Cloud or Local in the HUD header or use the voice commands
+  above. Cloud replies send conversation text to Google.
 
 The default voice model is `qwen2.5:1.5b`. The document model is
 `qwen2.5:3b-instruct-q4_K_M` (optional, about 2 GB). You can download the
@@ -159,6 +196,14 @@ ollama pull qwen2.5:3b-instruct-q4_K_M
 The voice assistant uses `ollama_voice_model` from `rudra/config.json`. The
 separate `ollama_doc_model` is only needed for document notes. Ollama itself
 and model weights are not included in the Rudra installer.
+
+To enable screen understanding, also install a local vision model:
+```powershell
+ollama pull qwen2.5vl:3b
+```
+Rudra selects an installed Ollama vision model automatically. Without one,
+screen analysis reports that setup requirement; ordinary chat continues using
+the selected voice model.
 
 ### 2. Installation
 ```bash
@@ -179,6 +224,14 @@ npm --prefix frontend install
 npm run dev
 ```
 *This starts Vite and Electron. Electron reserves a loopback port, starts the FastAPI backend with a per-launch token, and restarts it if it exits.*
+
+Say **“Open Notepad”**, **“Set volume to 50%”**, **“Lock PC”**, or
+**“Take a screenshot”** for direct desktop actions. **“Take a photo”** captures
+a webcam image in `Pictures\Rudra`; camera access depends on Windows privacy
+settings. **“Summarize copied text”** summarizes clipboard text and
+**“Explain what’s on my screen”** analyzes the current display. The screen and
+clipboard content are processed by local Ollama; vision requires the optional
+vision model above. Use the HUD microphone button to pause audio capture.
 
 ### 4. Production Build & Execution
 ```bash

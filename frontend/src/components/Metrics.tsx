@@ -3,7 +3,9 @@ import { useVoiceStore } from '../store/voiceStore';
 import { Zap, Activity, Cpu, Check, TriangleAlert } from 'lucide-react';
 
 export const Metrics: React.FC = () => {
-  const { timing, isConnected, backendStatus, llmStatus, voiceStatus, settings } = useVoiceStore();
+  const {
+    timing, isConnected, backendStatus, llmStatus, voiceStatus, settings, systemMetrics,
+  } = useVoiceStore();
   const backendColor = isConnected
     ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
     : backendStatus === 'failed'
@@ -39,40 +41,25 @@ export const Metrics: React.FC = () => {
         : 'Speech recognition is ready; online neural speech is unavailable, offline speech will be used.';
 
   return (
-    <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[10px] text-slate-400 font-mono select-none" data-no-drag>
-      <div className="flex items-center gap-2.5">
-        <div className="flex items-center gap-1" title={isConnected ? 'Backend WebSocket is connected.' : backendStatus === 'failed' ? 'Backend connection failed.' : 'Connecting to the backend.'}>
-          <span className={`h-1.5 w-1.5 rounded-full ${backendColor}`} />
-          <span>BACKEND</span>
-        </div>
-        <div className="flex items-center gap-1" title={llmReason}>
-          <span className={`h-1.5 w-1.5 rounded-full ${llmColor}`} />
-          <span>LLM</span>
-        </div>
-        <div className="flex items-center gap-1" title={voiceReason}>
-          <span className={`h-1.5 w-1.5 rounded-full ${voiceColor}`} />
-          <span>VOICE</span>
-        </div>
-      </div>
-
-      {/* Latency telemetry */}
-      <div className="flex items-center gap-3">
-        {timing.llm_first_token_ms !== undefined && (
-          <div className="flex items-center gap-1 text-slate-300" title="First token latency">
-            <Zap className="w-3 h-3 text-amber-400" />
-            <span>{timing.llm_first_token_ms}ms</span>
+    <div className="telemetry-panel" data-no-drag>
+      <div className="telemetry-topline">
+        <div className="telemetry-statuses">
+          <div className="telemetry-status" title={isConnected ? 'Backend WebSocket is connected.' : backendStatus === 'failed' ? 'Backend connection failed.' : 'Connecting to the backend.'}>
+            <span className={`h-1.5 w-1.5 rounded-full ${backendColor}`} />
+            <span>BACKEND</span>
           </div>
-        )}
-
-        {timing.total_ms !== undefined && (
-          <div className="flex items-center gap-1 text-slate-300" title="Total response latency">
-            <Activity className="w-3 h-3 text-cyan-400" />
-            <span>{timing.total_ms}ms</span>
+          <div className="telemetry-status" title={llmReason}>
+            <span className={`h-1.5 w-1.5 rounded-full ${llmColor}`} />
+            <span>OLLAMA</span>
           </div>
-        )}
+          <div className="telemetry-status" title={voiceReason}>
+            <span className={`h-1.5 w-1.5 rounded-full ${voiceColor}`} />
+            <span>VOICE</span>
+          </div>
+        </div>
 
-        <div className="flex items-center gap-1 text-slate-400 bg-slate-900/90 px-1.5 py-0.5 rounded border border-slate-800" title={llmReason}>
-          <Cpu className="w-2.5 h-2.5 text-indigo-400" />
+        <div className="telemetry-model" title={llmReason}>
+          <Cpu className="h-3 w-3 text-cyan-300" />
           <span>{llmStatus?.model || settings.llm_model}</span>
           {llmStatus?.installed
             ? <Check className="h-2.5 w-2.5 text-emerald-400" aria-label="Model installed" />
@@ -80,6 +67,58 @@ export const Metrics: React.FC = () => {
               ? <TriangleAlert className="h-2.5 w-2.5 text-amber-400" aria-label="Model missing" />
               : null}
         </div>
+      </div>
+
+      <div className="telemetry-grid" aria-label="Live system telemetry">
+        <TelemetryBar
+          label="CPU"
+          value={systemMetrics?.cpu_percent}
+          detail={systemMetrics ? `${Math.round(systemMetrics.cpu_percent)}%` : '—'}
+        />
+        <TelemetryBar
+          label="RAM"
+          value={systemMetrics?.memory_percent}
+          detail={systemMetrics
+            ? `${systemMetrics.memory_used_gb}/${systemMetrics.memory_total_gb} GB`
+            : 'Waiting'}
+        />
+      </div>
+
+      <div className="telemetry-latency">
+        {timing.llm_first_token_ms !== undefined && (
+          <div className="flex items-center gap-1" title="First token latency">
+            <Zap className="h-3 w-3 text-amber-300" />
+            <span>{timing.llm_first_token_ms}ms</span>
+          </div>
+        )}
+
+        {timing.total_ms !== undefined && (
+          <div className="flex items-center gap-1" title="Total response latency">
+            <Activity className="h-3 w-3 text-cyan-300" />
+            <span>{timing.total_ms}ms</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+interface TelemetryBarProps {
+  label: string;
+  value?: number;
+  detail: string;
+}
+
+const TelemetryBar: React.FC<TelemetryBarProps> = ({ label, value, detail }) => {
+  const percentage = Math.max(0, Math.min(100, value ?? 0));
+  return (
+    <div className="telemetry-meter" aria-label={`${label} usage ${detail}`}>
+      <div className="telemetry-meter-label">
+        <span>{label}</span>
+        <span>{detail}</span>
+      </div>
+      <div className="telemetry-track">
+        <div className="telemetry-fill" style={{ width: `${percentage}%` }} />
       </div>
     </div>
   );

@@ -16,8 +16,23 @@ hiddenimports = [
     "pyttsx3.drivers.sapi5",
 ]
 
-for package in ("faster_whisper", "ctranslate2", "multipart"):
+for package in (
+    "faster_whisper",
+    "ctranslate2",
+    "multipart",
+    "google.genai",
+    "dotenv",
+    "kokoro",
+    "soundfile",
+    "torch",
+):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
+    datas.extend(package_datas)
+    binaries.extend(package_binaries)
+    hiddenimports.extend(package_hiddenimports)
+
+if find_spec("cv2") is not None:
+    package_datas, package_binaries, package_hiddenimports = collect_all("cv2")
     datas.extend(package_datas)
     binaries.extend(package_binaries)
     hiddenimports.extend(package_hiddenimports)
@@ -41,7 +56,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["torch", "chromadb", "sentence_transformers", "easyocr", "cv2"],
+    excludes=["chromadb", "sentence_transformers", "easyocr"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

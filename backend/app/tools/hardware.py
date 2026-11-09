@@ -135,6 +135,19 @@ async def system_status() -> str:
     return await asyncio.to_thread(_stats)
 
 
+def get_system_metrics() -> dict[str, float]:
+    """Return a lightweight CPU/RAM snapshot for the HUD."""
+    import psutil
+
+    memory = psutil.virtual_memory()
+    return {
+        "cpu_percent": psutil.cpu_percent(interval=None),
+        "memory_percent": memory.percent,
+        "memory_used_gb": round(memory.used / (1024 ** 3), 1),
+        "memory_total_gb": round(memory.total / (1024 ** 3), 1),
+    }
+
+
 @tool("get_time", "Get the current time and date.", tier=Tier.AUTO)
 async def get_time() -> str:
     now = datetime.datetime.now()
@@ -162,6 +175,13 @@ async def screenshot() -> str:
         except Exception as e:
             return f"Screenshot failed: {e}"
     return await asyncio.to_thread(_snap)
+
+
+@tool("capture_photo", "Capture a photo with the webcam when the user explicitly asks to take a photo.")
+async def capture_photo() -> str:
+    from rudra.skills.vision import capture_photo as capture_webcam_photo
+
+    return await asyncio.to_thread(capture_webcam_photo)
 
 
 # ---------------------------------------------------------------------------

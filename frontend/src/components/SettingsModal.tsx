@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useVoiceStore, ListeningMode } from '../store/voiceStore';
-import { X, Sliders, Mic, Globe, Cpu } from 'lucide-react';
+import { X, Sliders, Mic, Globe, Cpu, Cloud } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -8,11 +8,64 @@ interface SettingsModalProps {
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
-  const { settings, updateSettings, mode, setMode, llmStatus } = useVoiceStore();
+  const { settings, updateSettings, mode, setMode, llmStatus, setLLMStatus } = useVoiceStore();
+  const [geminiKey, setGeminiKey] = useState('');
+  const [geminiSaved, setGeminiSaved] = useState(false);
+  const [geminiSaving, setGeminiSaving] = useState(false);
+  const [geminiError, setGeminiError] = useState('');
 
   if (!isOpen) return null;
   const installedModels = llmStatus?.models_installed ?? [];
   const hardwareProfile = llmStatus?.hardware_profile;
+  const geminiConfigured = geminiSaved || llmStatus?.gemini_configured === true;
+
+  const saveGeminiKey = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const apiKey = geminiKey.trim();
+    if (!apiKey) {
+      setGeminiError('Enter your Gemini API key to continue.');
+      return;
+    }
+    if (apiKey.length < 6 || apiKey.length > 512) {
+      setGeminiError('Gemini API keys must contain 6 to 512 characters.');
+      return;
+    }
+
+    setGeminiSaving(true);
+    setGeminiError('');
+    try {
+      const config = await window.electronAPI?.getBackendConfig();
+      if (!config?.httpBase || !config.token) {
+        throw new Error('Backend configuration unavailable.');
+      }
+      const response = await fetch(`${config.httpBase}/api/settings/gemini-key`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ api_key: apiKey }),
+      });
+      const result = await response.json() as { detail?: string; configured?: boolean };
+      if (!response.ok || !result.configured) {
+        throw new Error(result.detail || `Could not save Gemini API key (HTTP ${response.status}).`);
+      }
+      setGeminiSaved(true);
+      setGeminiKey('');
+      const currentStatus = useVoiceStore.getState().llmStatus;
+      setLLMStatus({
+        reachable: currentStatus?.reachable ?? false,
+        model: currentStatus?.model ?? settings.llm_model,
+        installed: currentStatus?.installed ?? false,
+        ...currentStatus,
+        gemini_configured: true,
+      });
+    } catch (error) {
+      setGeminiError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setGeminiSaving(false);
+    }
+  };
 
   return (
     <div
@@ -73,6 +126,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             <option value="hi">Hindi (हिन्दी)</option>
             <option value="pa">Punjabi (ਪੰਜਾਬੀ)</option>
           </select>
+        </div>
+
+        {/* Optional Gemini cloud provider */}
+        <div className="flex flex-col gap-1.5 rounded-xl border border-sky-400/20 bg-sky-500/5 p-3">
+          <label className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
+            <Cloud className="w-3.5 h-3.5 text-sky-400" />
+            Gemini Cloud Acceleration
+          </label>
+          {geminiConfigured ? (
+            <p className="text-[10px] text-emerald-300" role="status">
+              Gemini 2.5 Flash is configured. Cloud errors are shown without switching providers.
+            </p>
+          ) : typeof llmStatus?.gemini_configured !== 'boolean' ? (
+            <p className="text-[10px] text-slate-400" role="status">
+              Checking whether a Gemini API key is configured…
+            </p>
+          ) : (
+            <>
+              <p className="text-[10px] text-slate-400">
+                Add a key to use Gemini for replies. Conversation text is sent to Google; without a key,
+                Rudra uses local Ollama.
+              </p>
+              <form onSubmit={(event) => void saveGeminiKey(event)} className="flex flex-col gap-2">
+                <input
+                  type="password"
+                  value={geminiKey}
+                  onChange={(event) => setGeminiKey(event.target.value)}
+                  minLength={6}
+                  maxLength={512}
+                  autoComplete="off"
+                  placeholder="Gemini API key"
+                  aria-label="Gemini API key"
+                  className="bg-slate-950/70 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 outline-none focus:border-sky-400"
+                />
+                <button
+                  type="submit"
+                  disabled={geminiSaving || !geminiKey.trim()}
+                  className="py-2 bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-slate-950 rounded-lg text-xs font-semibold"
+                >
+                  {geminiSaving ? 'Saving key…' : 'Save Gemini API key'}
+                </button>
+              </form>
+              {geminiError && <p className="text-[10px] text-rose-300" role="alert">{geminiError}</p>}
+            </>
+          )}
         </div>
 
         {/* Ollama Model Selection */}

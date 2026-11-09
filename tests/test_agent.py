@@ -1,5 +1,7 @@
 import unittest
 import tempfile
+import sys
+import types
 from pathlib import Path
 
 from rudra.agent import _execute_tool_action, detect_tool_call
@@ -14,6 +16,8 @@ class AgentToolDispatchTests(unittest.TestCase):
         self.assertIn("you alive?", SYSTEM_PROMPT.lower())
         self.assertIn("Alive and kicking", SYSTEM_PROMPT)
         self.assertIn("Right here", SYSTEM_PROMPT)
+        self.assertIn("Kaisa hai bhai?", SYSTEM_PROMPT)
+        self.assertIn("explicitly asks for spiritual advice", SYSTEM_PROMPT)
 
     def test_capture_photo_tool_description_accepts_click_phrases(self):
         capture_schema = next(
@@ -250,18 +254,55 @@ class AgentToolDispatchTests(unittest.TestCase):
 
         cameras = []
 
-        def video_capture(index):
+        def video_capture(index, *_backend):
             camera = Mock()
             camera.isOpened.return_value = False
             cameras.append(index)
             return camera
 
-        with patch("cv2.VideoCapture", side_effect=video_capture), patch("cv2.imwrite"):
+        from rudra.skills import vision
+
+        with tempfile.TemporaryDirectory() as temp_dir, \
+                patch.object(vision, "_PHOTO_DIR", Path(temp_dir)), \
+                patch("cv2.VideoCapture", side_effect=video_capture), patch("cv2.imwrite"):
             result = capture_photo()
 
         self.assertEqual(cameras, [0, 1, 2])
         self.assertIn('"Let desktop apps access your camera"', result)
         self.assertIn("OpenCV emitted no native diagnostic", result)
+
+    def test_camera_capture_discards_warmup_frames_and_saves_latest(self):
+        import numpy as np
+        from unittest.mock import Mock, patch
+        from rudra.skills import vision
+
+        camera = Mock()
+        camera.isOpened.return_value = True
+        camera.read.side_effect = [(True, np.zeros((2, 2, 3), dtype=np.uint8))] * 20 + [
+            (True, np.zeros((2, 2, 3), dtype=np.uint8)),
+            (True, np.ones((2, 2, 3), dtype=np.uint8) * 128),
+        ]
+        camera_index = []
+        video_capture = Mock(side_effect=lambda index, *_backend: camera_index.append(index) or camera)
+        saved = {}
+        fake_cv2 = types.SimpleNamespace(
+            VideoCapture=video_capture,
+            CAP_DSHOW=700,
+            redirectError=Mock(return_value=None),
+            imwrite=Mock(side_effect=lambda path, frame: saved.update(path=path, frame=frame) or True),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir, \
+                patch.object(vision, "_PHOTO_DIR", Path(temp_dir)), \
+                patch.object(vision, "sys", types.SimpleNamespace(platform="win32")), \
+                patch.dict(sys.modules, {"cv2": fake_cv2}), \
+                patch.object(vision.time, "sleep"):
+            result = vision.capture_photo()
+
+        self.assertIn("Captured photo to", result)
+        self.assertEqual(camera_index, [0])
+        self.assertEqual(camera.read.call_count, 22)
+        self.assertTrue(np.all(saved["frame"] == 128))
+        camera.release.assert_called_once()
 
     # ── File-open spoken phrase tests ──────────────────────────────
 

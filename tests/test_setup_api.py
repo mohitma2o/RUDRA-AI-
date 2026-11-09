@@ -23,6 +23,128 @@ def test_setup_status_requires_local_api_token():
     assert _API_TOKEN
 
 
+def test_gemini_key_endpoint_requires_auth_and_saves_without_returning_key(monkeypatch):
+    saved_config = {}
+    configured_keys = []
+    monkeypatch.setattr(
+        backend_main,
+        "save_user_config",
+        lambda updates: saved_config.update(updates),
+    )
+    monkeypatch.setattr(
+        backend_main._llm_manager,
+        "set_api_key",
+        lambda key: configured_keys.append(key),
+    )
+
+    client = TestClient(app)
+    missing_auth = client.post(
+        "/api/settings/gemini-key",
+        json={"api_key": "test-gemini-key"},
+    )
+    response = client.post(
+        "/api/settings/gemini-key",
+        headers={"Authorization": f"Bearer {_API_TOKEN}"},
+        json={"api_key": "  test-gemini-key  "},
+    )
+
+    assert missing_auth.status_code == 401
+    assert response.status_code == 200
+    assert response.json() == {"configured": True}
+    assert "test-gemini-key" not in response.text
+    assert saved_config == {"gemini_api_key": "test-gemini-key"}
+    assert configured_keys == ["test-gemini-key"]
+
+
+def test_gemini_key_endpoint_rejects_short_keys():
+    client = TestClient(
+        app,
+        headers={"Authorization": f"Bearer {_API_TOKEN}"},
+    )
+    response = client.post(
+        "/api/settings/gemini-key",
+        json={"api_key": "short"},
+    )
+
+    assert response.status_code == 422
+    assert "6 to 512" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    ("hour", "language", "expected_language", "expected_text"),
+    [
+        (8, "auto", "en", "Namaskar! Good morning."),
+        (14, "en", "en", "Good afternoon."),
+        (20, "hi", "hi", "शुभ संध्या"),
+        (9, "pa", "pa", "ਸ਼ੁਭ ਸਵੇਰ"),
+    ],
+)
+def test_startup_greeting_is_time_and_language_aware(
+    hour,
+    language,
+    expected_language,
+    expected_text,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        backend_main,
+        "_llm_manager",
+        type("CloudManager", (), {"mode": "CLOUD"})(),
+    )
+    text, detected_language = backend_main._startup_greeting_text(hour, language)
+
+    assert detected_language == expected_language
+    assert expected_text in text
+    assert "Gemini Cloud Mode" in text
+    assert "online" in text.lower() or expected_language in {"hi", "pa"}
+
+
+def test_authenticated_websocket_sends_startup_greeting_to_hud(monkeypatch):
+    async def healthy_ollama():
+        return {
+            "reachable": True,
+            "voice_model": "qwen2.5:1.5b",
+            "voice_model_installed": True,
+            "doc_model": "qwen2.5:3b-instruct-q4_K_M",
+            "doc_model_installed": True,
+            "models_installed": ["qwen2.5:1.5b"],
+            "hardware_profile": None,
+            "error": None,
+        }
+
+    async def no_audio(_text, _voice, _language):
+        return b"", "audio/mpeg"
+
+    monkeypatch.setattr(backend_main, "_startup_greeting_sent", False)
+    monkeypatch.setattr(backend_main, "ollama_health", healthy_ollama)
+    monkeypatch.setattr(backend_main, "synth", no_audio)
+    monkeypatch.setattr(
+        backend_main,
+        "_llm_manager",
+        type("CloudManager", (), {"mode": "CLOUD", "gemini_configured": True})(),
+    )
+
+    with TestClient(app).websocket_connect(
+        "/ws/voice",
+        headers={"Origin": "http://127.0.0.1:5173"},
+    ) as websocket:
+        websocket.send_json({"type": "auth", "token": _API_TOKEN})
+        assert websocket.receive_json()["type"] == "config"
+        assert websocket.receive_json()["type"] == "state"
+        messages = []
+        for _ in range(4):
+            message = websocket.receive_json()
+            messages.append(message)
+            if message["type"] == "llm_status" and any(
+                item["type"] == "reply_delta" for item in messages
+            ):
+                break
+        greeting = next(item for item in messages if item["type"] == "reply_delta")
+        assert greeting["text"].startswith("Namaskar!")
+        assert "Gemini Cloud Mode" in greeting["text"]
+        assert any(item["type"] == "llm_status" for item in messages)
+
+
 @pytest.mark.parametrize(
     ("ollama_result", "expected_reachable", "voice_installed", "doc_installed", "error"),
     [
@@ -86,6 +208,9 @@ def test_websocket_requires_authentication_and_a_local_origin(monkeypatch):
     client = TestClient(app)
     origin = "http://127.0.0.1:5173"
 
+    async def no_audio(_text, _voice, _language):
+        return b"", "audio/mpeg"
+
     async def healthy_ollama():
         return {
             "reachable": True,
@@ -104,36 +229,40 @@ def test_websocket_requires_authentication_and_a_local_origin(monkeypatch):
         }
 
     monkeypatch.setattr(backend_main, "ollama_health", healthy_ollama)
+    monkeypatch.setattr(backend_main, "_startup_greeting_sent", True)
+    monkeypatch.setattr(backend_main, "synth", no_audio)
+    assert backend_main._websocket_origin_allowed(origin)
+    assert backend_main._websocket_origin_allowed("null")
+    assert not backend_main._websocket_origin_allowed("https://example.com")
+
     with client.websocket_connect("/ws/voice", headers={"Origin": origin}) as websocket:
         websocket.send_json({"type": "auth", "token": _API_TOKEN})
         assert websocket.receive_json()["type"] == "config"
         assert websocket.receive_json() == {"type": "state", "state": "idle"}
-        llm_status = websocket.receive_json()
+        messages = []
+        while True:
+            message = websocket.receive_json()
+            messages.append(message)
+            if message["type"] == "llm_status":
+                break
+        llm_status = next(message for message in messages if message["type"] == "llm_status")
         assert llm_status["type"] == "llm_status"
         assert llm_status["models_installed"] == ["qwen2.5:1.5b", "phi3:mini"]
         assert llm_status["hardware_profile"]["tier"] == "low"
-
-    with client.websocket_connect("/ws/voice", headers={"Origin": "null"}) as websocket:
-        websocket.send_json({"type": "auth", "token": _API_TOKEN})
-        assert websocket.receive_json()["type"] == "config"
-        assert websocket.receive_json() == {"type": "state", "state": "idle"}
 
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/ws/voice", headers={"Origin": origin}) as websocket:
             websocket.send_json({"type": "auth", "token": "invalid"})
             websocket.receive_json()
 
-    with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(
-            "/ws/voice",
-            headers={"Origin": "https://example.com"},
-        ):
-            pass
-
 
 def test_packaged_websocket_accepts_file_origin_and_missing_origin(monkeypatch):
     monkeypatch.setattr(backend_main, "_IS_DEV", False)
     monkeypatch.setattr(backend_main, "_ALLOWED_ORIGINS", ("file://", "null"))
+    assert backend_main._websocket_origin_allowed("file://")
+    assert backend_main._websocket_origin_allowed("null")
+    assert backend_main._websocket_origin_allowed(None)
+    assert not backend_main._websocket_origin_allowed("https://example.com")
 
     async def healthy_ollama():
         return {
@@ -146,13 +275,18 @@ def test_packaged_websocket_accepts_file_origin_and_missing_origin(monkeypatch):
         }
 
     monkeypatch.setattr(backend_main, "ollama_health", healthy_ollama)
+    monkeypatch.setattr(backend_main, "_startup_greeting_sent", True)
     client = TestClient(app)
     for headers in ({"Origin": "file://"}, {}):
         with client.websocket_connect("/ws/voice", headers=headers) as websocket:
             websocket.send_json({"type": "auth", "token": _API_TOKEN})
             assert websocket.receive_json()["type"] == "config"
             assert websocket.receive_json()["type"] == "state"
-            assert websocket.receive_json()["type"] == "llm_status"
+            for _ in range(5):
+                if websocket.receive_json()["type"] == "llm_status":
+                    break
+            else:
+                raise AssertionError("Initial LLM status was not sent.")
 
 
 def test_cors_preflight_allows_only_local_app_origins():

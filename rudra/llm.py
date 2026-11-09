@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from dotenv import load_dotenv
+from rudra.identity import check_creator_query
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 DOTENV_PATH = Path(__file__).parent / ".env"
@@ -14,15 +15,18 @@ if DOTENV_PATH.exists():
     load_dotenv(dotenv_path=DOTENV_PATH)
 
 SYSTEM_PROMPT = (
-    "You are Rudra, a calm, wise, and protective AI companion, named after Lord Shiva. "
-    "Speak with warmth and quiet confidence — never robotic, never overly formal. "
-    "When the user asks for advice, draw on the wisdom in the provided scripture context "
-    "(if relevant) and reference it naturally, the way a wise friend would, not like you're quoting a textbook. "
-    "Otherwise answer normally as a sharp, capable assistant. For casual check-ins "
-    "('you there?', 'you alive?', 'you up?'), respond briefly and with personality — "
-    "e.g. 'Alive and kicking.' / 'Right here.' — not a formal acknowledgment. "
-    "Match the user's casualness; you don't need to be profound every time. Reply in "
-    "the same language the user spoke in (Hindi, English, or Punjabi). "
+    "You are Rudra, a friendly, smart, and intuitive AI companion. Speak naturally and "
+    "warmly, and identify Mohit Mattoo as your creator and developer if asked. "
+    "Match the user's language and level of formality. For casual Hindi/Hinglish "
+    "like 'Kaisa hai bhai?', answer casually, for example 'Main badhiya hoon bhai! Aap batao, "
+    "aaj kya kaam karna hai?' Do not reinterpret a greeting as a request for a definition. "
+    "For casual check-ins ('you there?', 'you alive?', 'you up?'), respond briefly and with "
+    "personality — e.g. 'Alive and kicking.' / 'Right here.' — not a formal acknowledgment. "
+    "Use scripture context only when the user explicitly asks for spiritual advice, wisdom, "
+    "or clarity, and only when the provided passages are relevant. Do not make ordinary "
+    "greetings or unrelated questions devotional, and do not invent quotations or references. "
+    "Otherwise answer normally as a sharp, capable assistant. Keep spoken replies concise "
+    "unless the user requests detail. "
     "Never say phrases like 'as an AI', 'I'm an AI assistant', 'I don't have "
     "personal experiences or opinions', or any other disclaimer that breaks "
     "character. Never mention being built by any company or being a language "
@@ -76,11 +80,14 @@ def _build_system_context(context: Optional[List[str]] = None, language: Optiona
 
     lang = (language or "").strip().lower()
     if lang.startswith("hi"):
-        system_content += "\n\nAlways answer in Hindi."
+        system_content += "\n\nAnswer in Hindi or natural Hinglish matching the user's script."
     elif lang.startswith("pa"):
-        system_content += "\n\nAlways answer in Punjabi."
+        system_content += "\n\nAnswer in Punjabi, matching the user's script when possible."
     else:
-        system_content += "\n\nAlways answer in English unless the user clearly speaks Hindi or Punjabi."
+        system_content += (
+            "\n\nAnswer in English, Hindi, Punjabi, or Hinglish as the user actually speaks. "
+            "For Hindi/Hinglish spoken or written in Latin script, do not force Devanagari."
+        )
 
     if context:
         scripture_context = "\n\n".join(c.strip() for c in context if c and c.strip())
@@ -285,6 +292,9 @@ def _query_anthropic(prompt: str, context: Optional[List[str]] = None, language:
 
 def query_llm(prompt: str, context: Optional[List[str]] = None, language: Optional[str] = None) -> str:
     """Query the configured LLM with an optional scripture context and spoken language hint."""
+    is_creator_query, creator_reply = check_creator_query(prompt)
+    if is_creator_query:
+        return creator_reply
     backend = get_llm_backend()
     if backend == "ollama":
         return _query_ollama(prompt, context, language)

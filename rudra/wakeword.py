@@ -13,6 +13,66 @@ except ImportError:
     from state import state as app_state
 
 _stop_event = Event()
+_LISTENER_RETRY_SECONDS = 3.0
+_MUTE_POLL_SECONDS = 0.05
+
+
+def _default_input_device(pa):
+    """Return the system's default input device index, logging lookup failures."""
+    get_default_device = getattr(pa, "get_default_input_device_info", None)
+    if get_default_device is None:
+        print("PyAudio does not expose default input-device information; using its default.")
+        return None
+    try:
+        device = get_default_device()
+        index = int(device["index"])
+        print(f"Using default microphone: {device.get('name', 'unnamed')} (device {index}).")
+        return index
+    except Exception as exc:
+        print(f"Could not inspect the default microphone ({type(exc).__name__}: {exc}); "
+              "letting PyAudio select its default.")
+        return None
+
+
+def _open_input_stream(pa, pyaudio, *, rate: int, chunk: int):
+    """Open the active system microphone, falling back to PyAudio's default selection."""
+    device_index = _default_input_device(pa)
+    options = {
+        "format": pyaudio.paInt16,
+        "channels": 1,
+        "rate": rate,
+        "input": True,
+        "frames_per_buffer": chunk,
+    }
+    if device_index is not None:
+        try:
+            return pa.open(input_device_index=device_index, **options)
+        except Exception as exc:
+            print(f"Could not open microphone device {device_index} "
+                  f"({type(exc).__name__}: {exc}); retrying PyAudio default input.")
+    return pa.open(**options)
+
+
+def _listener_worker(callback: Callable[[str], None], model=None) -> None:
+    """Keep the selected wake listener alive after microphone/runtime failures."""
+    use_native = model is not None
+    while not _stop_event.is_set():
+        try:
+            if use_native:
+                _openwakeword_loop(callback, model)
+            else:
+                _speech_recognition_loop(callback)
+            if not _stop_event.is_set():
+                raise RuntimeError("The audio listener stopped unexpectedly.")
+        except Exception as exc:
+            print(
+                f"Wake listener error ({type(exc).__name__}: {exc}); "
+                f"retrying in {_LISTENER_RETRY_SECONDS:g} seconds."
+            )
+            if use_native:
+                use_native = False
+                print("Switching to the local Whisper wake-word fallback.")
+            _stop_event.wait(_LISTENER_RETRY_SECONDS)
 
 
 def _select_wakeword_trigger(predictions: dict[str, float], threshold: float = 0.45):
@@ -106,11 +166,11 @@ def _speech_recognition_loop(callback: Callable[[str], None]) -> None:
     ENERGY_THRESHOLD = _cal_thresh or 300
 
     pa = pyaudio.PyAudio()
-    stream = pa.open(format=pyaudio.paInt16, channels=1, rate=RATE,
-                     input=True, frames_per_buffer=CHUNK)
+    stream = None
 
-    print(f"Wake word fallback (local Whisper): mic ready (threshold={ENERGY_THRESHOLD}).")
     try:
+        stream = _open_input_stream(pa, pyaudio, rate=RATE, chunk=CHUNK)
+        print(f"Wake word fallback (local Whisper): mic ready (threshold={ENERGY_THRESHOLD}).")
         while not _stop_event.is_set():
             frames = []
             silent_chunks = 0
@@ -119,7 +179,7 @@ def _speech_recognition_loop(callback: Callable[[str], None]) -> None:
                 if app_state.is_muted:
                     frames = []
                     recording = False
-                    time.sleep(0.05)
+                    _stop_event.wait(_MUTE_POLL_SECONDS)
                     break
                 raw = stream.read(CHUNK, exception_on_overflow=False)
                 audio_chunk = np.frombuffer(raw, dtype=np.int16)
@@ -162,22 +222,23 @@ def _speech_recognition_loop(callback: Callable[[str], None]) -> None:
             except Exception as exc:
                 print(f"Wake word fallback transcription error: {exc}")
     finally:
-        stream.stop_stream()
-        stream.close()
+        if stream is not None:
+            stream.stop_stream()
+            stream.close()
         pa.terminate()
 
 
 def start_wakeword_listener(callback: Callable[[str], None], model_path: str = "models/rudra.onnx") -> None:
     """Start a wake word listener thread and call callback when Rudra is detected."""
+    model = None
     try:
         model = load_wakeword_model(model_path)
         print("openWakeWord model loaded; starting native wake word loop.")
-        thread = Thread(target=_openwakeword_loop, args=(callback, model), daemon=True)
     except Exception as exc:
         print("openWakeWord unavailable; using SpeechRecognition fallback:", exc)
-        thread = Thread(target=_speech_recognition_loop, args=(callback,), daemon=True)
 
     _stop_event.clear()
+    thread = Thread(target=_listener_worker, args=(callback, model), daemon=True)
     thread.start()
 
 
@@ -190,21 +251,16 @@ def _openwakeword_loop(callback: Callable[[str], None], model) -> None:
     import pyaudio
 
     pa = pyaudio.PyAudio()
-    stream = pa.open(
-        format=pyaudio.paInt16,
-        channels=1,
-        rate=16000,
-        input=True,
-        frames_per_buffer=1280,
-    )
+    stream = None
     last_trigger = 0.0
     threshold = 0.45
 
     try:
+        stream = _open_input_stream(pa, pyaudio, rate=16000, chunk=1280)
         while not _stop_event.is_set():
             frame = stream.read(1280, exception_on_overflow=False)
             if app_state.is_muted:
-                time.sleep(0.01)
+                _stop_event.wait(_MUTE_POLL_SECONDS)
                 continue
             audio = np.frombuffer(frame, dtype=np.int16)
             predictions = model.predict(audio)
@@ -215,8 +271,9 @@ def _openwakeword_loop(callback: Callable[[str], None], model) -> None:
                 last_trigger = time.monotonic()
                 print(f"Wake word trigger fired via {trigger_name}.")
 
-            time.sleep(0.01)
+            _stop_event.wait(0.01)
     finally:
-        stream.stop_stream()
-        stream.close()
+        if stream is not None:
+            stream.stop_stream()
+            stream.close()
         pa.terminate()

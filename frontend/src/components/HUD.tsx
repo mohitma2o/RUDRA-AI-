@@ -5,9 +5,10 @@ import { Metrics } from './Metrics';
 import { SettingsModal } from './SettingsModal';
 import { SetupNotice } from './SetupNotice';
 import { DocumentsWorkspace } from './DocumentsWorkspace';
+import { DailyWisdomCard } from './DailyWisdomCard';
 import { useVoicePipeline } from '../hooks/useVoicePipeline';
 import { useVoiceStore } from '../store/voiceStore';
-import { Settings, Send, X, Minus, Sparkles, FileText, Mic, MicOff } from 'lucide-react';
+import { Settings, Send, X, Minus, Sparkles, FileText, Mic, MicOff, Cloud, Monitor } from 'lucide-react';
 
 export const HUD: React.FC = () => {
   const [inputText, setInputText] = useState('');
@@ -18,6 +19,7 @@ export const HUD: React.FC = () => {
     connectionDownSince, isConnected, errorNotice, setErrorNotice,
     setBackendConfigError, notesReady, setNotesReady,
     isMicMuted, setMicMuted,
+    llmStatus, settings, updateSettings,
   } = useVoiceStore();
   const { interrupt, sendTextQuery, sendConfirmResponse, retryConnection } = useVoicePipeline();
   const [now, setNow] = useState(Date.now());
@@ -56,29 +58,56 @@ export const HUD: React.FC = () => {
   };
 
   return (
-    <div className="relative w-full max-w-[420px] rounded-3xl glass-panel p-5 flex flex-col gap-4 shadow-2xl border border-sky-500/20">
+    <div className="hud-shell relative w-full max-w-[520px] max-h-[calc(100vh-24px)] overflow-y-auto rounded-[28px] p-5 flex flex-col gap-4">
       {/* Window Header */}
-      <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+      <div className="flex items-center justify-between border-b border-cyan-300/15 pb-3">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-lg bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center shadow-md shadow-sky-500/30">
-            <Sparkles className="w-3.5 h-3.5 text-white" />
+          <div className="hud-brand-icon w-7 h-7 rounded-lg flex items-center justify-center">
+            <Sparkles className="w-3.5 h-3.5 text-cyan-100" />
           </div>
           <div>
-            <span className="font-bold text-sm tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-sky-400 via-indigo-300 to-purple-400">
-              RUDRA AI
-            </span>
-            <span className="text-[10px] text-slate-400 ml-1.5 font-mono">v2.0</span>
+            <div className="hud-wordmark">RUDRA <span>AI</span></div>
+            <div className="hud-subtitle">PERSONAL INTELLIGENCE SYSTEM</div>
           </div>
         </div>
 
         {/* Window action buttons */}
         <div className="flex items-center gap-1.5" data-no-drag>
+          <div className="flex items-center rounded-lg border border-slate-700/70 p-0.5" role="group" aria-label="Assistant engine">
+            <button
+              onClick={() => updateSettings({ engine_mode: 'CLOUD' })}
+              disabled={!llmStatus?.gemini_configured}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[9px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                settings.engine_mode === 'CLOUD'
+                  ? 'bg-sky-400 text-slate-950 shadow-[0_0_10px_#00F0FF]'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title={llmStatus?.gemini_configured ? 'Use Gemini Cloud' : 'Add a Gemini API key in Settings first'}
+              aria-pressed={settings.engine_mode === 'CLOUD'}
+            >
+              <Cloud className="h-3 w-3" />
+              Cloud
+            </button>
+            <button
+              onClick={() => updateSettings({ engine_mode: 'LOCAL' })}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[9px] font-semibold transition-colors ${
+                settings.engine_mode === 'LOCAL'
+                  ? 'bg-sky-400 text-slate-950 shadow-[0_0_10px_#00F0FF]'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Use local Ollama"
+              aria-pressed={settings.engine_mode === 'LOCAL'}
+            >
+              <Monitor className="h-3 w-3" />
+              Local
+            </button>
+          </div>
           <button
             onClick={() => setMicMuted(!isMicMuted)}
             className={`p-1.5 rounded-lg transition-colors ${
               isMicMuted
-                ? 'text-rose-300 bg-rose-500/10 hover:bg-rose-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+                ? 'hud-icon-button hud-icon-button-muted'
+                : 'hud-icon-button'
             }`}
             title={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
             aria-label={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
@@ -88,7 +117,7 @@ export const HUD: React.FC = () => {
           </button>
           <button
             onClick={() => setIsDocumentsOpen(true)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors"
+            className="hud-icon-button"
             title="Documents"
             aria-label="Open document workspace"
           >
@@ -96,21 +125,21 @@ export const HUD: React.FC = () => {
           </button>
           <button
             onClick={() => setIsSettingsOpen(true)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors"
+            className="hud-icon-button"
             title="Settings"
           >
             <Settings className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={handleMinimizeWindow}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors"
+            className="hud-icon-button"
             title="Minimize"
           >
             <Minus className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={handleCloseWindow}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+            className="hud-icon-button hover:!text-rose-300"
             title="Close / Hide HUD"
           >
             <X className="w-3.5 h-3.5" />
@@ -119,9 +148,9 @@ export const HUD: React.FC = () => {
       </div>
 
       {/* Main Orb Center */}
-      <div className="flex flex-col items-center justify-center py-3">
+      <div className="relative flex flex-col items-center justify-center py-1">
         {(backendStatus !== 'ready' || !isConnected || backendConfigError) && (
-          <div className="mb-3 text-center text-xs text-amber-300" role="status">
+          <div className="mb-3 text-center text-xs text-amber-200 font-mono" role="status">
             {backendConfigError || (backendStatus === 'failed'
               ? (backendMessage || 'Rudra could not start.')
               : !isConnected && connectionDownSince !== null
@@ -158,17 +187,17 @@ export const HUD: React.FC = () => {
       <SetupNotice />
 
       {/* Text Command Input Bar */}
-      <form onSubmit={handleSendText} className="relative mt-2" data-no-drag>
+      <form onSubmit={handleSendText} className="relative mt-1" data-no-drag>
         <input
           type="text"
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           placeholder={mode === 'wake' ? 'Say "Rudra..." or type a request' : 'Type a request...'}
-          className="w-full bg-slate-950/70 border border-slate-800 rounded-xl pl-3.5 pr-10 py-2.5 text-xs text-slate-100 placeholder:text-slate-500 outline-none focus:border-sky-500/60 focus:ring-1 focus:ring-sky-500/30 transition-all font-sans"
+          className="hud-command-input w-full rounded-xl pl-3.5 pr-10 py-2.5 text-xs outline-none transition-all font-sans"
         />
         <button
           type="submit"
-          className="absolute right-1.5 top-1.5 p-1.5 rounded-lg bg-sky-600/80 hover:bg-sky-500 text-white transition-colors disabled:opacity-40"
+          className="hud-send-button absolute right-1.5 top-1.5 p-1.5 rounded-lg transition-colors disabled:opacity-40"
           disabled={!inputText.trim()}
         >
           <Send className="w-3.5 h-3.5" />
@@ -177,6 +206,7 @@ export const HUD: React.FC = () => {
 
       {/* Metrics & Telemetry Bar */}
       <Metrics />
+      <DailyWisdomCard />
       {errorNotice && (
         <div className="flex items-start justify-between gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200" role="alert">
           <span>{errorNotice.message}</span>

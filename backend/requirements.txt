@@ -4,6 +4,8 @@ uvicorn[standard]==0.34.3
 websockets==14.2
 httpx==0.28.1
 python-multipart==0.0.32
+google-genai>=0.1.0
+python-dotenv>=1.0.0
 
 # STT
 numpy==2.2.6
@@ -11,6 +13,8 @@ faster-whisper==1.2.1
 
 # TTS
 edge-tts==7.2.8
+kokoro>=0.9.4
+soundfile>=0.12.1
 pyttsx3==2.98
 
 # Wake word fuzzy matching
@@ -23,6 +27,7 @@ screen-brightness-control==0.23.0
 pyautogui==0.9.54
 pyperclip==1.9.0
 mss==10.0.0
+opencv-python-headless==4.11.0.86
 pypdf==5.4.0
 python-docx==1.1.2
 python-pptx==1.0.2
