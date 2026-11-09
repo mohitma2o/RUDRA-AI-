@@ -241,3 +241,20 @@
 - Still outstanding: live Ollama summaries, physical Windows audio/desktop
   interaction, and a packaged PyInstaller/Electron installer smoke test. These
   require local services, hardware, and/or the large Whisper model download.
+
+## Round 2 — Document notes and exports
+
+- Split document processing into extraction, prompt, summarization, storage,
+  service, and API modules. Added seven note styles, language selection,
+  content/style/model-aware summary caching, source-text-backed regeneration,
+  bounded uploads and PDF processing, and safe document prompts.
+- Added local job progress/cancellation, fast voice-job notifications, flashcard
+  validation, Markdown/text/DOCX/flashcard JSON exports, and native Electron
+  save/PDF-print flows. The renderer uses HTML-disabled Markdown rendering.
+- Uploaded copies are removed after extraction; extracted source text remains
+  in the local notes database for regeneration, and this is disclosed in the
+  workspace and README.
+- Verified `python -m pytest tests -q` (110 passed, 1 skipped, 16 subtests),
+  `npm run build`, `npm run test:electron` (2 passed), and `git diff --check`.
+- Not yet verified: live Ollama summarization or native save/print dialogs in a
+  packaged Windows desktop session.

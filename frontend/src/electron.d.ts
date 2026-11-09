@@ -13,6 +13,12 @@ declare global {
         token: string;
       } | null>;
       restartBackend: () => Promise<void>;
+      saveFile: (request: {
+        defaultPath: string;
+        data: Uint8Array;
+        filters?: { name: string; extensions: string[] }[];
+      }) => Promise<string | null>;
+      printNotePdf: (defaultPath: string) => Promise<string | null>;
       openBackendLog: () => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       onHotkeyTrigger: (callback: () => void) => () => void;

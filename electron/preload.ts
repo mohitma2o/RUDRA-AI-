@@ -7,6 +7,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVersion: () => ipcRenderer.invoke('get-version'),
   getBackendConfig: () => ipcRenderer.invoke('get-backend-config'),
   restartBackend: () => ipcRenderer.invoke('restart-backend'),
+  saveFile: (request: {
+    defaultPath: string;
+    data: Uint8Array;
+    filters?: { name: string; extensions: string[] }[];
+  }) => ipcRenderer.invoke('save-file', request),
+  printNotePdf: (defaultPath: string) => ipcRenderer.invoke('print-note-pdf', defaultPath),
   openBackendLog: () => ipcRenderer.invoke('open-backend-log'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   onHotkeyTrigger: (callback: () => void) => {

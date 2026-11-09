@@ -625,7 +625,12 @@ class Session:
         fast_match = match_fast_path(command_text)
         if fast_match:
             tool_name, tool_args = fast_match
-            result_text = await execute(tool_name, tool_args, confirm=self.ask_confirm)
+            result_text = await execute(
+                tool_name,
+                tool_args,
+                confirm=self.ask_confirm,
+                context={"notify": self.send_json},
+            )
             await self.speak_direct_reply(result_text, lang)
             return
 
@@ -643,7 +648,12 @@ class Session:
         fast_match = match_fast_path(text)
         if fast_match:
             tool_name, tool_args = fast_match
-            result_text = await execute(tool_name, tool_args, confirm=self.ask_confirm)
+            result_text = await execute(
+                tool_name,
+                tool_args,
+                confirm=self.ask_confirm,
+                context={"notify": self.send_json},
+            )
             await self.speak_direct_reply(result_text, lang)
             return
 

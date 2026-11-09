@@ -63,3 +63,41 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
 }
+
+#print-root {
+  display: none;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  #print-root,
+  #print-root * {
+    visibility: visible !important;
+  }
+
+  #print-root {
+    display: block !important;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    padding: 24px;
+    color: #111827;
+    background: white;
+    font-family: Arial, sans-serif;
+  }
+
+  #print-root table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  #print-root th,
+  #print-root td {
+    border: 1px solid #9ca3af;
+    padding: 6px;
+    text-align: left;
+  }
+}

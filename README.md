@@ -89,7 +89,11 @@ Optimized specifically for budget hardware targets (e.g., **Intel i3 10th Gen, 1
 - **🎬 Autonomous Media Control:** Playwright browser automation with persistent context (`.rudra/browser/`) searches and auto-plays songs/videos on YouTube without repetitive sign-ins.
 - **🖥️ Desktop & Hardware Automation:** Control master system volume, screen brightness, take timestamped screenshots to `~/Pictures/Rudra/`, and lock your Windows workstation.
 - **📂 Scoped File Access:** Search, open, and read files only inside Desktop, Documents, Downloads, Pictures, Music, or Videos. App closing requires confirmation.
-- **📄 Document Workspace:** Summarize TXT, Markdown, PDF, DOCX, and PPTX files with the on-demand local document model; follow progress, manage saved summaries, and export Markdown or text notes.
+- **📄 Document Workspace:** Summarize TXT, Markdown, PDF, DOCX, and PPTX files with the on-demand local document model; follow progress, manage and regenerate seven styles of notes, and export Markdown, text, Word, PDF, or flashcard JSON.
+
+Uploaded file copies are removed after text extraction. Extracted source text is
+kept in the local notes database so saved notes can be regenerated in another
+style.
 
 ---
 
@@ -213,7 +217,7 @@ RUDRA-AI-/
 ├── backend/                # FastAPI Streaming Voice Backend
 │   └── app/
 │       ├── main.py         # Authenticated HTTP/WebSocket routes and voice pipeline
-│       ├── documents.py    # Document jobs, SSE progress, notes, and exports
+│       ├── documents/      # Document extraction, jobs, notes, and exports
 │       ├── voice/          # faster-whisper STT, rapidfuzz wake, streaming LLM & TTS
 │       └── tools/          # Tool registry, safety tiers, hardware & browser tools
 ├── rudra/                  # Core assets & models

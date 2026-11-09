@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'crypto';
 import { mkdirSync } from 'fs';
+import { writeFile } from 'fs/promises';
 import { ChildProcess, spawn } from 'child_process';
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, shell, Tray } from 'electron';
 import * as http from 'http';
 import * as path from 'path';
 import { createServer } from 'net';
@@ -377,6 +378,50 @@ ipcMain.on('window-close', () => mainWindow?.hide());
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('get-backend-config', () => backendConfig);
 ipcMain.handle('restart-backend', () => restartBackend());
+ipcMain.handle('save-file', async (_event, request: unknown) => {
+  if (!request || typeof request !== 'object') {
+    throw new TypeError('Expected a file save request.');
+  }
+  const { defaultPath, data, filters } = request as {
+    defaultPath?: unknown;
+    data?: unknown;
+    filters?: unknown;
+  };
+  if (typeof defaultPath !== 'string' || (typeof data !== 'object' && !(data instanceof ArrayBuffer))) {
+    throw new TypeError('Expected a file name and binary file data.');
+  }
+  const bytes = data instanceof Uint8Array
+    ? Buffer.from(data)
+    : data instanceof ArrayBuffer
+      ? Buffer.from(data)
+      : null;
+  if (!bytes) throw new TypeError('File data must be a byte array.');
+  const options = {
+    defaultPath,
+    filters: Array.isArray(filters) ? filters as Electron.FileFilter[] : undefined,
+  };
+  const result = mainWindow && !mainWindow.isDestroyed()
+    ? await dialog.showSaveDialog(mainWindow, options)
+    : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) return null;
+  await writeFile(result.filePath, bytes);
+  return result.filePath;
+});
+ipcMain.handle('print-note-pdf', async (_event, defaultPath: unknown) => {
+  if (typeof defaultPath !== 'string') throw new TypeError('Expected a PDF file name.');
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('The Rudra window is not available.');
+  const pdf = await mainWindow.webContents.printToPDF({
+    pageSize: 'A4',
+    printBackground: true,
+  });
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath,
+    filters: [{ name: 'PDF document', extensions: ['pdf'] }],
+  });
+  if (result.canceled || !result.filePath) return null;
+  await writeFile(result.filePath, pdf);
+  return result.filePath;
+});
 ipcMain.handle('open-backend-log', () => {
   if (backendLogPath) void shell.openPath(backendLogPath);
 });

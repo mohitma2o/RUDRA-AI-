@@ -16,7 +16,7 @@ export const HUD: React.FC = () => {
   const {
     state, mode, backendStatus, backendMessage, backendConfigError,
     connectionDownSince, isConnected, errorNotice, setErrorNotice,
-    setBackendConfigError,
+    setBackendConfigError, notesReady, setNotesReady,
   } = useVoiceStore();
   const { interrupt, sendTextQuery, sendConfirmResponse, retryConnection } = useVoicePipeline();
   const [now, setNow] = useState(Date.now());
@@ -169,6 +169,17 @@ export const HUD: React.FC = () => {
           <button onClick={() => setErrorNotice(null)} aria-label="Dismiss error" className="shrink-0">
             <X className="h-3.5 w-3.5" />
           </button>
+        </div>
+      )}
+      {notesReady && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200" role="status">
+          <span>Notes for {notesReady.filename} are ready.</span>
+          <div className="flex shrink-0 gap-2">
+            <button onClick={() => setIsDocumentsOpen(true)} className="underline">Open</button>
+            <button onClick={() => setNotesReady(null)} aria-label="Dismiss notes notification">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       )}
 

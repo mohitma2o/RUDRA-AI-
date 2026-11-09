@@ -148,6 +148,12 @@ export function useVoicePipeline() {
             case 'error':
               store.setErrorNotice({ code: message.code, message: message.message || 'The request failed.' });
               break;
+            case 'notes_ready':
+              store.setNotesReady({ note_id: message.note_id, filename: message.filename });
+              break;
+            case 'document_error':
+              store.setErrorNotice({ message: message.message || 'Document summarization failed.' });
+              break;
             default:
               break;
           }

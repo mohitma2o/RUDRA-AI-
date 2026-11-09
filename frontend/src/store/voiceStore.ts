@@ -25,6 +25,11 @@ export interface VoiceStatus {
   error?: string | null;
 }
 
+export interface NotesReady {
+  note_id: number;
+  filename: string;
+}
+
 export interface HistoryItem {
   id: string;
   role: 'user' | 'assistant';
@@ -49,6 +54,7 @@ export interface VoiceStore {
   llmStatus: LLMStatus | null;
   voiceStatus: VoiceStatus | null;
   errorNotice: { code?: string; message: string } | null;
+  notesReady: NotesReady | null;
   audioLevel: number;
   history: HistoryItem[];
   confirmPrompt: { tool: string; args: Record<string, any> } | null;
@@ -72,6 +78,7 @@ export interface VoiceStore {
   setLLMStatus: (status: LLMStatus) => void;
   setVoiceStatus: (status: VoiceStatus) => void;
   setErrorNotice: (notice: { code?: string; message: string } | null) => void;
+  setNotesReady: (notice: NotesReady | null) => void;
   setAudioLevel: (level: number) => void;
   setConfirmPrompt: (data: { tool: string; args: Record<string, any> } | null) => void;
   updateSettings: (newSettings: Partial<VoiceStore['settings']>) => void;
@@ -94,6 +101,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   llmStatus: null,
   voiceStatus: null,
   errorNotice: null,
+  notesReady: null,
   audioLevel: 0,
   history: [],
   confirmPrompt: null,
@@ -156,6 +164,7 @@ export const useVoiceStore = create<VoiceStore>((set) => ({
   setLLMStatus: (llmStatus) => set({ llmStatus }),
   setVoiceStatus: (voiceStatus) => set({ voiceStatus }),
   setErrorNotice: (errorNotice) => set({ errorNotice }),
+  setNotesReady: (notesReady) => set({ notesReady }),
   setAudioLevel: (audioLevel) => set({ audioLevel }),
   setConfirmPrompt: (confirmPrompt) => set({ confirmPrompt }),
   updateSettings: (newSettings) =>

@@ -5,6 +5,7 @@ the session must ask the user for approval before calling run().
 """
 
 import asyncio
+from contextvars import ContextVar
 import json
 import logging
 from dataclasses import dataclass
@@ -40,6 +41,12 @@ class Tool:
 
 
 REGISTRY: dict[str, Tool] = {}
+_TOOL_CONTEXT: ContextVar[dict] = ContextVar("rudra_tool_context", default={})
+
+
+def get_tool_context() -> dict:
+    """Return callbacks supplied by the active voice or API tool invocation."""
+    return _TOOL_CONTEXT.get()
 
 
 def tool(
@@ -92,6 +99,7 @@ async def execute(
     args: dict,
     confirm: Callable[[Tool, dict], Awaitable[bool]],
     activity_log: Optional[list] = None,
+    context: Optional[dict] = None,
 ) -> str:
     """Look up a tool, optionally get confirmation, then run it.
 
@@ -116,11 +124,14 @@ async def execute(
                 activity_log.append({"tool": name, "args": args, "status": "cancelled"})
             return "Cancelled."
 
+    context_token = _TOOL_CONTEXT.set(context or {})
     try:
         result = await t.run(**args)
     except Exception as e:
         logger.error("Tool %s failed: %s", name, e)
         result = f"Tool error: {e}"
+    finally:
+        _TOOL_CONTEXT.reset(context_token)
 
     if activity_log is not None:
         activity_log.append({"tool": name, "args": args, "result": result, "status": "done"})
